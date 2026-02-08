@@ -13,8 +13,25 @@ Allow unit testing to be done in CI environments like GitHub / GitLab using loca
 
 ## Setup
 
+> export PYTHONPATH=.
+
 > pip install pyspark pandas pytest
 
 > cd tests
 
 > pytest
+
+## How to use ?
+
+```python
+
+spark = SparkMock(base_path='./store')
+
+df = spark.read.table("my_schema.table1")
+
+df2 = spark.sql("SELECT a,b,c FROM my_schema.table2")
+...
+
+final_df.write.mode("overwrite").saveAsTable("my_schema.table2")
+
+```
