@@ -1,5 +1,6 @@
 from pyspark.sql import SparkSession
-from .data_frame_reader import DataFrameReader, MockDataFrame
+from .data_frame_reader import DataFrameReader
+from .data_frame_wrapper import DataFrameWrapper
 import os
 
 
@@ -19,7 +20,10 @@ class SparkMock:
     def sql(self, query):
         modified_query = query.replace('.', '_')
         df = self._spark_session.sql(modified_query)
-        return MockDataFrame(self, df)
+        return DataFrameWrapper(self, df)
+    
+    def parallelize(self, c, numSlices=None):
+        return DataFrameWrapper(self, self._spark_session.sparkContext.parallelize(c, numSlices))
     
     def _get_full_path(self, relative_path):
         return os.path.join(self._base_path, relative_path)

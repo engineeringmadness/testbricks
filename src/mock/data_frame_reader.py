@@ -1,21 +1,6 @@
 from pyspark.sql import SparkSession
 from .data_frame_writer import DataFrameWriter
-
-
-class MockDataFrame:
-    def __init__(self, spark_mock, dataframe):
-        self._spark = spark_mock
-        self._dataframe = dataframe
-        self._write = None
-    
-    def __getattr__(self, name):
-        return getattr(self._dataframe, name)
-    
-    @property
-    def write(self):
-        if self._write is None:
-            self._write = DataFrameWriter(self._spark, self._dataframe)
-        return self._write
+from .data_frame_wrapper import DataFrameWrapper
 
 
 class DataFrameReader:
@@ -46,4 +31,4 @@ class DataFrameReader:
             reader = reader.option(key, value)
         
         df = reader.csv(csv_path)
-        return MockDataFrame(self._spark, df)
+        return DataFrameWrapper(self._spark, df)
