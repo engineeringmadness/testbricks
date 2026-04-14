@@ -1,4 +1,5 @@
 import json
+import os
 from graphlib import CycleError, TopologicalSorter
 
 
@@ -19,7 +20,6 @@ class LocalWorkflowRunner:
 
         self.dag = self._build_dag()
         self.execution_order = self._build_execution_order()
-        self.print_dag()
 
     def _load_workflow(self):
         with open(self.workflow_json_path, "r", encoding="utf-8") as workflow_file:
@@ -100,17 +100,32 @@ class LocalWorkflowRunner:
             raise ValueError("Workflow graph contains a cycle") from exc
 
     def format_dag(self):
-        lines = ["Workflow DAG (notebook names):"]
+        lines = []
         for notebook_name in self._notebook_insertion_order:
             outgoing = sorted(self.dag.get(notebook_name, set()))
             if outgoing:
-                lines.append(f"- {notebook_name} -> {', '.join(outgoing)}")
+                lines.append(f"- {notebook_name} -> [{', '.join(outgoing)}]")
             else:
                 lines.append(f"- {notebook_name} -> []")
 
         lines.append("Execution order:")
         lines.append(" -> ".join(self.execution_order))
         return "\n".join(lines)
+    
 
-    def print_dag(self):
+    def _execfile(self, file_path, global_namespace, local_namespace):
+        with open(file_path, "r", encoding="utf-8") as file:
+            code = compile(file.read(), file_path, "exec")
+        exec(code, global_namespace, local_namespace)
+
+    def run_workflow(self):
+        execution_globals = {"__name__": "__main__"}
+        print(f"\nExecuting workflow: {self.workflow_json_path}\n")
+        print("==========================================")
         print(self.format_dag())
+        for notebook_name in self.execution_order:
+            notebook_path = os.path.join(self.source_dir, f"{notebook_name}.py")
+            if not os.path.exists(notebook_path):
+                raise FileNotFoundError(f"Notebook file not found: {notebook_path}")
+            execution_globals["__file__"] = notebook_path
+            self._execfile(notebook_path, execution_globals, execution_globals)
