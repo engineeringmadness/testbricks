@@ -26,3 +26,16 @@ All code is placed inside `src` directory and all modules are placed inside thei
 ## Active Technologies
 - Python 3.14 + pyspark, pandas, pyarrow, numpy, py4j (001-spark-mock-catalog)
 - Local files (CSV-compatible data + catalog registry) (001-spark-mock-catalog)
+
+## Development commands
+
+PySpark requires Java (OpenJDK 21 is installed in the Cloud Agent environment).
+
+```bash
+# Install dependencies (also run automatically by the Cloud Agent install phase)
+./.cursor/install.sh
+
+# Run the full test suite with coverage (matches CI)
+python3.14 -m coverage run -m pytest tests/ -v
+python3.14 -m coverage report
+```
