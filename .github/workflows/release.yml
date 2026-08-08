@@ -31,6 +31,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -42,6 +44,19 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --upgrade build
           python -m build --wheel
+
+      - name: Verify built version matches tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la dist/
+          if ! ls dist/testbricks-${GITHUB_REF_NAME}-*.whl >/dev/null 2>&1; then
+            echo "::error::Expected wheel 'testbricks-${GITHUB_REF_NAME}-*.whl' not found in dist/."
+            echo "Built artifacts:"
+            ls dist/
+            exit 1
+          fi
+          echo "Verified: built wheel matches tag ${GITHUB_REF_NAME}"
 
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

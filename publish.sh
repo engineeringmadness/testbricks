@@ -7,10 +7,10 @@ echo "Building testbrick package..."
 rm -rf build/ dist/ *.egg-info/
 
 # Install build dependencies
-pip install setuptools wheel twine
+pip install build twine
 
-# Build the package
-python setup.py sdist bdist_wheel
+# Build the package (sdist + wheel) via pyproject.toml
+python -m build
 
 # Publish to PyPI
 echo "Publishing to PyPI..."
