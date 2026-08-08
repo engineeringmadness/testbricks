@@ -340,6 +340,61 @@ class TestPercentRunCommands:
             transform_run_commands("# %run   \n", notebook_path)
 
 
+class TestTopLevelNotebookExit:
+    def test_top_level_exit_stops_file(self, tmp_path):
+        notebook_path = tmp_path / "main.py"
+        marker = tmp_path / "marker.txt"
+        notebook_path.write_text(
+            'dbutils.notebook.exit("early")\n'
+            f'open(r"{marker}", "w").write("ran")\n',
+            encoding="utf-8",
+        )
+
+        runner = LocalWorkflowRunner(
+            str(tmp_path), _write_single_task_workflow(tmp_path), str(tmp_path)
+        )
+        runner.run_workflow()
+
+        assert not marker.exists()
+
+    def test_top_level_exit_continues_workflow(self, tmp_path):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        log_file = tmp_path / "execution.log"
+
+        (source_dir / "first.py").write_text(
+            'dbutils.notebook.exit("early")\n'
+            f'with open(r"{log_file}", "a") as f: f.write("first_after\\n")',
+            encoding="utf-8",
+        )
+        (source_dir / "second.py").write_text(
+            f'with open(r"{log_file}", "a") as f: f.write("second\\n")',
+            encoding="utf-8",
+        )
+
+        workflow = {
+            "tasks": [
+                {
+                    "task_key": "first_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/first"},
+                },
+                {
+                    "task_key": "second_task",
+                    "depends_on": [{"task_key": "first_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/second"},
+                },
+            ]
+        }
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+
+        runner = LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+        runner.run_workflow()
+
+        lines = log_file.read_text(encoding="utf-8").splitlines()
+        assert lines == ["second"]
+
+
 def _notebook_namespace(main_path, runner):
     namespace = {"__name__": "__main__", "__file__": main_path}
     namespace["__run_notebook__"] = lambda path: runner._run_notebook(path, namespace)

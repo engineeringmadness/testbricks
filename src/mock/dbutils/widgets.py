@@ -1,14 +1,34 @@
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from .errors import DbutilsError
+
+_argument_overrides: ContextVar[frozenset[str] | None] = ContextVar(
+    "argument_overrides", default=None
+)
+
+
+@contextmanager
+def argument_override_context(keys):
+    token = _argument_overrides.set(frozenset(keys))
+    try:
+        yield
+    finally:
+        _argument_overrides.reset(token)
 
 
 class WidgetsMock:
     def __init__(self):
         self._registry: set[str] = set()
 
+    def _set_widget_value(self, name, value):
+        overrides = _argument_overrides.get()
+        if overrides is None or name not in overrides:
+            os.environ[name] = str(value)
+
     def text(self, name, default, label=None):
-        os.environ[name] = str(default)
+        self._set_widget_value(name, default)
         self._registry.add(name)
         return None
 
@@ -17,7 +37,7 @@ class WidgetsMock:
             raise DbutilsError(
                 f"Default value '{default}' is not in choices {list(choices)}"
             )
-        os.environ[name] = str(default)
+        self._set_widget_value(name, default)
         self._registry.add(name)
         return None
 

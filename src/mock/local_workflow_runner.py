@@ -1,30 +1,11 @@
 import json
 import os
-import re
 from graphlib import CycleError, TopologicalSorter
 
-RUN_COMMAND_PATTERN = re.compile(
-    r"^\s*#\s*(?:MAGIC\s+)?%run\s+(.+?)\s*$",
-    re.MULTILINE,
-)
+from mock.notebook_executor import transform_run_commands
 
-
-def parse_run_path(raw_path, file_path):
-    path = raw_path.strip()
-    if len(path) >= 2 and path[0] == path[-1] and path[0] in ("'", '"'):
-        path = path[1:-1]
-    path = path.strip()
-    if not path:
-        raise ValueError(f"Empty %run path in notebook '{file_path}'")
-    return path
-
-
-def transform_run_commands(source, file_path):
-    def replace(match):
-        relative_path = parse_run_path(match.group(1), file_path)
-        return f"__run_notebook__({relative_path!r})"
-
-    return RUN_COMMAND_PATTERN.sub(replace, source)
+# Re-export for backward compatibility.
+__all__ = ["LocalWorkflowRunner", "transform_run_commands"]
 
 
 class LocalWorkflowRunner:
@@ -137,39 +118,27 @@ class LocalWorkflowRunner:
         lines.append(" -> ".join(self.execution_order))
         return "\n".join(lines)
 
-    def _resolve_notebook_path(self, relative_path, base_file):
-        notebook_path = os.path.normpath(
-            os.path.join(os.path.dirname(base_file), relative_path)
-        )
-        if not notebook_path.endswith(".py"):
-            notebook_path += ".py"
-        return notebook_path
+    def _executor(self):
+        from mock.dbutils import dbutils
+
+        return dbutils.executor
 
     def _run_notebook(self, relative_path, namespace):
-        notebook_path = self._resolve_notebook_path(
-            relative_path, namespace["__file__"]
-        )
-        self._execfile(notebook_path, namespace, namespace)
-
-    def _execute_source(self, source, file_path, global_namespace, local_namespace):
-        transformed = transform_run_commands(source, file_path)
-        exec(compile(transformed, file_path, "exec"), global_namespace, local_namespace)
+        self._executor().run_shared(relative_path, namespace)
 
     def _execfile(self, file_path, global_namespace, local_namespace):
-        with open(file_path, encoding="utf-8") as notebook_file:
-            source = notebook_file.read()
-        global_namespace["__file__"] = file_path
-        self._execute_source(source, file_path, global_namespace, local_namespace)
+        self._executor().exec_file(file_path, global_namespace, top_level=False)
 
     def run_workflow(self):
         from mock.dbutils import configure, dbutils
 
-        configure(self.base_path)
+        configure(self.base_path, source_dir=self.source_dir)
+        executor = dbutils.executor
         execution_globals = {
             "__name__": "__main__",
             "dbutils": dbutils,
         }
-        execution_globals["__run_notebook__"] = lambda path: self._run_notebook(
+        execution_globals["__run_notebook__"] = lambda path: executor.run_shared(
             path, execution_globals
         )
         print(f"\nExecuting workflow: {self.workflow_json_path}\n")
@@ -180,4 +149,4 @@ class LocalWorkflowRunner:
             if not os.path.exists(notebook_path):
                 raise FileNotFoundError(f"Notebook file not found: {notebook_path}")
             execution_globals["__file__"] = notebook_path
-            self._execfile(notebook_path, execution_globals, execution_globals)
+            executor.exec_file(notebook_path, execution_globals, top_level=True)
