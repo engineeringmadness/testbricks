@@ -103,7 +103,7 @@ def configure(base_path, source_dir=None):
 - `base_path` — existing; used by `dbutils.fs` (unchanged).
 - `source_dir` — root directory for workspace-style notebook paths. `LocalWorkflowRunner.run_workflow()` passes `self.source_dir`.
 
-`NotebookExecutor` reads `source_dir` from the dbutils singleton (via `DbutilsMock`) for absolute path resolution.
+`DbutilsMock.configure(base_path, source_dir=None)` stores both values. `NotebookExecutor` reads `source_dir` from the dbutils singleton for absolute path resolution.
 
 ### Caller context
 
@@ -248,6 +248,7 @@ DAG building, task parsing, and `format_dag()` remain unchanged.
 
 - Autouse fixture: `configure(tmp_path, source_dir=tmp_path)` before each test.
 - `dbutils.widgets.removeAll()` in teardown to isolate widget state.
+- Tests that call `dbutils.notebook.run()` directly must set caller context (e.g. `executor.set_caller_file(path)` or a test helper) so relative path resolution works outside a workflow.
 
 ## Migration / Compatibility
 

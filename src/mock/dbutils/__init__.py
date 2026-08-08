@@ -4,5 +4,5 @@ from .errors import DbutilsError
 dbutils = DbutilsMock()
 
 
-def configure(base_path):
-    dbutils.configure(base_path)
+def configure(base_path, source_dir=None):
+    dbutils.configure(base_path, source_dir)
