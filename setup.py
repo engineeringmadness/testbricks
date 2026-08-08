@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="testbrick",
+    name="testbricks",
     version="0.1.0",
     description="A set of proxy objects to facilitate testing of Databricks notebooks in CI/CD pipelines",
     author="Karan Gupta",
