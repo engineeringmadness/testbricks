@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import json
 import pytest
 
-from mock.local_workflow_runner import LocalWorkflowRunner
+from mock.local_workflow_runner import LocalWorkflowRunner, transform_run_commands
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -279,26 +279,21 @@ class TestWorkflowValidation:
 
 class TestPercentRunCommands:
     def test_transform_run_command_comment(self, tmp_path):
-        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path))
         notebook_path = str(tmp_path / "main.py")
         source = "# %run ./helpers/setup\nprint('done')\n"
-        transformed = runner._transform_run_commands(source, notebook_path)
+        transformed = transform_run_commands(source, notebook_path)
 
         assert "# %run" not in transformed
-        assert "import os" in transformed
-        assert "open(__databricks_run_path" in transformed
-        assert "exec(compile(__databricks_run_code" in transformed
-        assert "'./helpers/setup'" in transformed
+        assert "__run_notebook__('./helpers/setup')" in transformed
         assert "print('done')" in transformed
 
     def test_transform_magic_run_command_comment(self, tmp_path):
-        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path))
         notebook_path = str(tmp_path / "main.py")
         source = "# MAGIC %run ../common/utils\n"
-        transformed = runner._transform_run_commands(source, notebook_path)
+        transformed = transform_run_commands(source, notebook_path)
 
         assert "# MAGIC %run" not in transformed
-        assert "'../common/utils'" in transformed
+        assert "__run_notebook__('../common/utils')" in transformed
 
     def test_run_notebook_executes_percent_run_target(self, tmp_path):
         helpers_dir = tmp_path / "helpers"
@@ -312,11 +307,11 @@ class TestPercentRunCommands:
         )
 
         runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path))
-        execution_globals = {"__name__": "__main__", "__file__": str(main_path)}
-        runner._inject_run_command_support(execution_globals)
-        runner._execfile(str(main_path), execution_globals, execution_globals)
+        namespace = _notebook_namespace(str(main_path), runner)
 
-        assert execution_globals["RESULT"] == "from_setup"
+        runner._execfile(str(main_path), namespace, namespace)
+
+        assert namespace["RESULT"] == "from_setup"
 
     def test_nested_percent_run_commands(self, tmp_path):
         common_dir = tmp_path / "common"
@@ -331,18 +326,23 @@ class TestPercentRunCommands:
         )
 
         runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path))
-        execution_globals = {"__name__": "__main__", "__file__": str(main_path)}
-        runner._inject_run_command_support(execution_globals)
-        runner._execfile(str(main_path), execution_globals, execution_globals)
+        namespace = _notebook_namespace(str(main_path), runner)
 
-        assert execution_globals["RESULT"] == 12
+        runner._execfile(str(main_path), namespace, namespace)
+
+        assert namespace["RESULT"] == 12
 
     def test_empty_percent_run_path_raises(self, tmp_path):
-        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path))
         notebook_path = str(tmp_path / "main.py")
 
         with pytest.raises(ValueError, match="Empty %run path"):
-            runner._transform_run_commands("# %run   \n", notebook_path)
+            transform_run_commands("# %run   \n", notebook_path)
+
+
+def _notebook_namespace(main_path, runner):
+    namespace = {"__name__": "__main__", "__file__": main_path}
+    namespace["__run_notebook__"] = lambda path: runner._run_notebook(path, namespace)
+    return namespace
 
 
 def _write_single_task_workflow(tmp_path):
