@@ -1,0 +1,28 @@
+Metadata-Version: 2.4
+Name: testbrick
+Version: 0.1.0
+Summary: A set of proxy objects to facilitate testing of Databricks notebooks in CI/CD pipelines
+Author: Karan Gupta
+Author-email: gkaran184@gmail.com
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Programming Language :: Python :: 3.14
+Requires-Python: >=3.8
+Requires-Dist: pyspark
+Requires-Dist: pandas
+Requires-Dist: pyarrow
+Requires-Dist: numpy
+Requires-Dist: py4j
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary

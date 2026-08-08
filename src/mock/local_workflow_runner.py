@@ -28,9 +28,10 @@ def transform_run_commands(source, file_path):
 
 
 class LocalWorkflowRunner:
-    def __init__(self, source_dir, workflow_json_path):
+    def __init__(self, source_dir, workflow_json_path, base_path):
         self.source_dir = source_dir
         self.workflow_json_path = workflow_json_path
+        self.base_path = base_path
 
         workflow = self._load_workflow()
         tasks = workflow.get("tasks")
@@ -161,7 +162,13 @@ class LocalWorkflowRunner:
         self._execute_source(source, file_path, global_namespace, local_namespace)
 
     def run_workflow(self):
-        execution_globals = {"__name__": "__main__"}
+        from mock.dbutils import configure, dbutils
+
+        configure(self.base_path)
+        execution_globals = {
+            "__name__": "__main__",
+            "dbutils": dbutils,
+        }
         execution_globals["__run_notebook__"] = lambda path: self._run_notebook(
             path, execution_globals
         )

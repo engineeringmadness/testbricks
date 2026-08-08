@@ -12,11 +12,12 @@ from mock.local_workflow_runner import LocalWorkflowRunner, transform_run_comman
 
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
 WORKFLOW_SAMPLE_PATH = os.path.join(ROOT_DIR, "specs", "workflow_sample.json")
+DEFAULT_BASE_PATH = os.path.join(ROOT_DIR, "tests", "data")
 
 
 class TestSampleWorkflowDAG:
     def test_builds_dag_using_notebook_names(self):
-        runner = LocalWorkflowRunner("src", WORKFLOW_SAMPLE_PATH)
+        runner = LocalWorkflowRunner("src", WORKFLOW_SAMPLE_PATH, DEFAULT_BASE_PATH)
 
         assert runner.dag["auxillary_dims"] == {"data_quality"}
         assert runner.dag["reviews_fact"] == {"data_quality"}
@@ -24,7 +25,7 @@ class TestSampleWorkflowDAG:
         assert runner.dag["semantic_layer"] == set()
 
     def test_execution_order_respects_dependencies(self):
-        runner = LocalWorkflowRunner("src", WORKFLOW_SAMPLE_PATH)
+        runner = LocalWorkflowRunner("src", WORKFLOW_SAMPLE_PATH, DEFAULT_BASE_PATH)
         order = runner.execution_order
 
         assert order.index("data_quality") > order.index("auxillary_dims")
@@ -32,7 +33,7 @@ class TestSampleWorkflowDAG:
         assert order.index("semantic_layer") > order.index("data_quality")
 
     def test_format_dag_includes_nodes_and_execution_order(self):
-        runner = LocalWorkflowRunner("src", WORKFLOW_SAMPLE_PATH)
+        runner = LocalWorkflowRunner("src", WORKFLOW_SAMPLE_PATH, DEFAULT_BASE_PATH)
         formatted = runner.format_dag()
 
         assert "- auxillary_dims -> [data_quality]" in formatted
@@ -65,7 +66,7 @@ class TestNotebookNameExtraction:
         workflow_path = tmp_path / "workflow.json"
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
-        runner = LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+        runner = LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
         assert runner._task_to_notebook["task_1"] == expected
         assert runner.execution_order == [expected]
 
@@ -103,7 +104,7 @@ class TestWorkflowExecution:
                 f'with open(r"{log_file}", "a") as f: f.write("{notebook_name}\\n")'
             )
 
-        runner = LocalWorkflowRunner(str(source_dir), str(workflow_path))
+        runner = LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
         runner.run_workflow()
 
         assert log_file.exists()
@@ -121,7 +122,7 @@ class TestWorkflowValidation:
         workflow_path.write_text(json.dumps({}), encoding="utf-8")
 
         with pytest.raises(ValueError, match="must contain a 'tasks' list"):
-            LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
     def test_non_dict_task_raises(self, tmp_path):
         workflow = {"tasks": ["not_a_dict"]}
@@ -129,7 +130,7 @@ class TestWorkflowValidation:
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
         with pytest.raises(ValueError, match="Each task must be a JSON object"):
-            LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
     def test_missing_task_key_raises(self, tmp_path):
         workflow = {"tasks": [{"notebook_task": {"notebook_path": "/a/b"}}]}
@@ -137,7 +138,7 @@ class TestWorkflowValidation:
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
         with pytest.raises(ValueError, match="must include a non-empty 'task_key'"):
-            LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
     def test_duplicate_task_key_raises(self, tmp_path):
         workflow = {
@@ -150,7 +151,7 @@ class TestWorkflowValidation:
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
         with pytest.raises(ValueError, match="Duplicate task_key found"):
-            LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
     def test_missing_notebook_task_raises(self, tmp_path):
         workflow = {"tasks": [{"task_key": "t1"}]}
@@ -158,7 +159,7 @@ class TestWorkflowValidation:
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
         with pytest.raises(ValueError, match="is missing 'notebook_task'"):
-            LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
     @pytest.mark.parametrize(
         "notebook_path",
@@ -174,7 +175,7 @@ class TestWorkflowValidation:
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
         with pytest.raises(ValueError, match="invalid notebook_path"):
-            LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
     def test_invalid_depends_on_format_raises(self, tmp_path):
         workflow = {
@@ -190,7 +191,7 @@ class TestWorkflowValidation:
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
         with pytest.raises(ValueError, match="invalid 'depends_on' format"):
-            LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
     def test_malformed_dependency_entry_raises(self, tmp_path):
         workflow = {
@@ -206,7 +207,7 @@ class TestWorkflowValidation:
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
         with pytest.raises(ValueError, match="malformed dependency entry"):
-            LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
     def test_unknown_dependency_raises(self, tmp_path):
         workflow = {
@@ -222,7 +223,7 @@ class TestWorkflowValidation:
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
         with pytest.raises(ValueError, match="depends on unknown task"):
-            LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
     def test_cyclic_workflow_raises(self, tmp_path):
         workflow = {
@@ -248,7 +249,7 @@ class TestWorkflowValidation:
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
         with pytest.raises(ValueError, match="contains a cycle"):
-            LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
     def test_missing_notebook_file_raises(self, tmp_path):
         workflow = {
@@ -259,7 +260,7 @@ class TestWorkflowValidation:
         workflow_path = tmp_path / "workflow.json"
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
-        runner = LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+        runner = LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
         with pytest.raises(FileNotFoundError, match="Notebook file not found"):
             runner.run_workflow()
 
@@ -274,7 +275,7 @@ class TestWorkflowValidation:
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
         with pytest.raises(ValueError, match="Duplicate notebook name found"):
-            LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
 
 class TestPercentRunCommands:
@@ -306,7 +307,7 @@ class TestPercentRunCommands:
             "# %run ./helpers/setup\nRESULT = SHARED_VALUE\n", encoding="utf-8"
         )
 
-        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path))
+        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path), str(tmp_path))
         namespace = _notebook_namespace(str(main_path), runner)
 
         runner._execfile(str(main_path), namespace, namespace)
@@ -325,7 +326,7 @@ class TestPercentRunCommands:
             "# %run ./middle\nRESULT = MIDDLE_VALUE + 1\n", encoding="utf-8"
         )
 
-        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path))
+        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path), str(tmp_path))
         namespace = _notebook_namespace(str(main_path), runner)
 
         runner._execfile(str(main_path), namespace, namespace)
