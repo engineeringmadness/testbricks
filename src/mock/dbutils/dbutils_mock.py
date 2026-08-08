@@ -1,6 +1,7 @@
 from .fs import FsMock
 from .noop import NoOpModule
 from .path_resolver import PathResolver
+from .widgets import WidgetsMock
 
 
 class DbutilsMock:
@@ -8,7 +9,7 @@ class DbutilsMock:
         self._path_resolver = PathResolver()
         self.fs = FsMock(self._path_resolver)
         self.secrets = NoOpModule()
-        self.widgets = NoOpModule()
+        self.widgets = WidgetsMock()
         self.notebook = NoOpModule()
         self.jobs = NoOpModule()
 
