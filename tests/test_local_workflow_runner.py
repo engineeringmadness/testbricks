@@ -275,3 +275,85 @@ class TestWorkflowValidation:
 
         with pytest.raises(ValueError, match="Duplicate notebook name found"):
             LocalWorkflowRunner(str(tmp_path), str(workflow_path))
+
+
+class TestPercentRunCommands:
+    def test_transform_run_command_comment(self, tmp_path):
+        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path))
+        notebook_path = str(tmp_path / "main.py")
+        source = "# %run ./helpers/setup\nprint('done')\n"
+        transformed = runner._transform_run_commands(source, notebook_path)
+
+        assert "# %run" not in transformed
+        assert "import os" in transformed
+        assert "open(__databricks_run_path" in transformed
+        assert "exec(compile(__databricks_run_code" in transformed
+        assert "'./helpers/setup'" in transformed
+        assert "print('done')" in transformed
+
+    def test_transform_magic_run_command_comment(self, tmp_path):
+        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path))
+        notebook_path = str(tmp_path / "main.py")
+        source = "# MAGIC %run ../common/utils\n"
+        transformed = runner._transform_run_commands(source, notebook_path)
+
+        assert "# MAGIC %run" not in transformed
+        assert "'../common/utils'" in transformed
+
+    def test_run_notebook_executes_percent_run_target(self, tmp_path):
+        helpers_dir = tmp_path / "helpers"
+        helpers_dir.mkdir()
+        (helpers_dir / "setup.py").write_text(
+            "SHARED_VALUE = 'from_setup'\n", encoding="utf-8"
+        )
+        main_path = tmp_path / "main.py"
+        main_path.write_text(
+            "# %run ./helpers/setup\nRESULT = SHARED_VALUE\n", encoding="utf-8"
+        )
+
+        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path))
+        execution_globals = {"__name__": "__main__", "__file__": str(main_path)}
+        runner._inject_run_command_support(execution_globals)
+        runner._execfile(str(main_path), execution_globals, execution_globals)
+
+        assert execution_globals["RESULT"] == "from_setup"
+
+    def test_nested_percent_run_commands(self, tmp_path):
+        common_dir = tmp_path / "common"
+        common_dir.mkdir()
+        (common_dir / "base.py").write_text("BASE_VALUE = 10\n", encoding="utf-8")
+        (tmp_path / "middle.py").write_text(
+            "# %run ./common/base\nMIDDLE_VALUE = BASE_VALUE + 1\n", encoding="utf-8"
+        )
+        main_path = tmp_path / "main.py"
+        main_path.write_text(
+            "# %run ./middle\nRESULT = MIDDLE_VALUE + 1\n", encoding="utf-8"
+        )
+
+        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path))
+        execution_globals = {"__name__": "__main__", "__file__": str(main_path)}
+        runner._inject_run_command_support(execution_globals)
+        runner._execfile(str(main_path), execution_globals, execution_globals)
+
+        assert execution_globals["RESULT"] == 12
+
+    def test_empty_percent_run_path_raises(self, tmp_path):
+        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path))
+        notebook_path = str(tmp_path / "main.py")
+
+        with pytest.raises(ValueError, match="Empty %run path"):
+            runner._transform_run_commands("# %run   \n", notebook_path)
+
+
+def _write_single_task_workflow(tmp_path):
+    workflow = {
+        "tasks": [
+            {
+                "task_key": "task_1",
+                "notebook_task": {"notebook_path": "/Workspace/any/main"},
+            }
+        ]
+    }
+    workflow_path = tmp_path / "workflow.json"
+    workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+    return str(workflow_path)

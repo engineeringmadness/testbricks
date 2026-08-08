@@ -1,6 +1,12 @@
 import json
 import os
+import re
 from graphlib import CycleError, TopologicalSorter
+
+RUN_COMMAND_PATTERN = re.compile(
+    r"^\s*#\s*(?:MAGIC\s+)?%run\s+(.+?)\s*$",
+    re.MULTILINE,
+)
 
 
 class LocalWorkflowRunner:
@@ -113,13 +119,53 @@ class LocalWorkflowRunner:
         return "\n".join(lines)
     
 
+    def _normalize_run_path(self, raw_path):
+        path = raw_path.strip()
+        if len(path) >= 2 and path[0] == path[-1] and path[0] in ("'", '"'):
+            path = path[1:-1]
+        return path.strip()
+
+    def _make_run_replacement(self, relative_path):
+        escaped_path = relative_path.replace("\\", "\\\\").replace("'", "\\'")
+        return (
+            "import os\n"
+            f"__databricks_run_path = os.path.normpath("
+            f"os.path.join(os.path.dirname(__file__), '{escaped_path}'))\n"
+            "if not __databricks_run_path.endswith('.py'):\n"
+            "    __databricks_run_path += '.py'\n"
+            "with open(__databricks_run_path, encoding='utf-8') as __databricks_run_file:\n"
+            "    __databricks_run_code = __databricks_run_file.read()\n"
+            "__databricks_run_code = __databricks_run_transform__("
+            "__databricks_run_code, __databricks_run_path)\n"
+            "globals()['__file__'] = __databricks_run_path\n"
+            "exec(compile(__databricks_run_code, __databricks_run_path, 'exec'), globals())"
+        )
+
+    def _transform_run_commands(self, source, file_path):
+        def replace_run_command(match):
+            relative_path = self._normalize_run_path(match.group(1))
+            if not relative_path:
+                raise ValueError(
+                    f"Empty %run path in notebook '{file_path}'"
+                )
+            return self._make_run_replacement(relative_path)
+
+        return RUN_COMMAND_PATTERN.sub(replace_run_command, source)
+
     def _execfile(self, file_path, global_namespace, local_namespace):
         with open(file_path, "r", encoding="utf-8") as file:
-            code = compile(file.read(), file_path, "exec")
+            source = self._transform_run_commands(file.read(), file_path)
+        code = compile(source, file_path, "exec")
         exec(code, global_namespace, local_namespace)
+
+    def _inject_run_command_support(self, execution_globals):
+        execution_globals["__databricks_run_transform__"] = (
+            lambda source, path: self._transform_run_commands(source, path)
+        )
 
     def run_workflow(self):
         execution_globals = {"__name__": "__main__"}
+        self._inject_run_command_support(execution_globals)
         print(f"\nExecuting workflow: {self.workflow_json_path}\n")
         print("==========================================")
         print(self.format_dag())
