@@ -9,29 +9,7 @@ Testbricks is my effort to decouple a typical Databricks Stack -
 - Notebooks with Pyspark code to transform said data
 - Databricks jobs to orchestrate a bunch of notebooks
 
-Allow unit testing to be done in CI environments like GitHub / GitLab using local spark and CSV files.
-
-## Setup
-
-> export PYTHONPATH=.
-
-> pip install pyspark pandas pytest
-
-> cd tests
-
-> pytest
-
-## How to use ?
-
-```python
-
-spark = SparkMock(base_path='./store')
-
-df = spark.read.table("my_schema.table1")
-
-df2 = spark.sql("SELECT a,b,c FROM my_schema.table2")
-...
-
-final_df.write.mode("overwrite").saveAsTable("my_schema.table2")
-
-```
+## Key Modules
+1. `SparkMock` - A Spark proxy that manipulates incoming Delta table reads and writes and redirects them to interactions with CSV files stored locally
+2. `LocalWorkflowRunner` - A notebook orchestrator that takes the notebook .py files as defined in a Databricks Workflow JSON file and executes them as per the DAG definition. Adding support also for few magic commands such as `%run` and `%sh` which are commonly used in Databricks notebooks.
+3. `dbutils` - A drop in replacement for dbutils. Currently supports `fs` module but future plans include support for `widgets` and `notebook` modules as well.
