@@ -1,10 +1,9 @@
 class NoOpModule:
     def __getattr__(self, name):
-        return _noop
+        return NoOpModule()
+
+    def __call__(self, *args, **kwargs):
+        return True
 
     def help(self, command=None):
         return True
-
-
-def _noop(*args, **kwargs):
-    return True

@@ -2,7 +2,7 @@ import os
 import shutil
 
 from .errors import DbutilsError
-from .noop import _noop
+from .noop import NoOpModule
 from .path_resolver import PathResolver
 
 _IMPLEMENTED_METHODS = frozenset({"cp", "mv", "rm", "mkdirs"})
@@ -15,7 +15,7 @@ class FsMock:
     def __getattr__(self, name):
         if name in _IMPLEMENTED_METHODS:
             raise AttributeError(name)
-        return _noop
+        return NoOpModule()
 
     def help(self, command=None):
         return True
