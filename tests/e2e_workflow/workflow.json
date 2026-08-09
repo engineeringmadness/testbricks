@@ -1,0 +1,32 @@
+{
+  "name": "e2e-customer-orders-pipeline",
+  "tasks": [
+    {
+      "task_key": "enrich_customers",
+      "notebook_task": {
+        "notebook_path": "/Workspace/e2e/notebooks/enrich_customers",
+        "base_parameters": { "filter_country": "ALL" },
+        "source": "WORKSPACE"
+      }
+    },
+    {
+      "task_key": "enrich_orders",
+      "notebook_task": {
+        "notebook_path": "/Workspace/e2e/notebooks/enrich_orders",
+        "base_parameters": { "min_amount": "0" },
+        "source": "WORKSPACE"
+      }
+    },
+    {
+      "task_key": "build_summary",
+      "depends_on": [
+        { "task_key": "enrich_customers" },
+        { "task_key": "enrich_orders" }
+      ],
+      "notebook_task": {
+        "notebook_path": "/Workspace/e2e/notebooks/build_summary",
+        "source": "WORKSPACE"
+      }
+    }
+  ]
+}

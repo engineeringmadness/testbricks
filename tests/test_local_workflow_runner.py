@@ -115,6 +115,86 @@ class TestWorkflowExecution:
         captured = capsys.readouterr()
         assert "Executing workflow:" in captured.out
 
+    def test_extra_globals_inject_keys_into_notebook_namespace(self, tmp_path):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        marker = tmp_path / "injected.txt"
+        (source_dir / "main.py").write_text(
+            f'with open(r"{marker}", "w") as f: f.write(str(injected_value))\n',
+            encoding="utf-8",
+        )
+
+        runner = LocalWorkflowRunner(
+            str(source_dir), _write_single_task_workflow(tmp_path), str(tmp_path)
+        )
+        runner.run_workflow(extra_globals={"injected_value": 42})
+
+        assert marker.read_text(encoding="utf-8") == "42"
+
+    def test_base_parameters_seed_env_when_unset(self, tmp_path):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        marker = tmp_path / "seeded.txt"
+        (source_dir / "main.py").write_text(
+            'import os\n'
+            f'with open(r"{marker}", "w") as f: f.write(os.environ["mode"])\n',
+            encoding="utf-8",
+        )
+
+        workflow = {
+            "tasks": [
+                {
+                    "task_key": "task_1",
+                    "notebook_task": {
+                        "notebook_path": "/Workspace/any/main",
+                        "base_parameters": {"mode": "default"},
+                    },
+                }
+            ]
+        }
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+
+        runner = LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+        runner.run_workflow()
+
+        assert marker.read_text(encoding="utf-8") == "default"
+
+    def test_base_parameters_do_not_clobber_existing_env(self, tmp_path):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        marker = tmp_path / "preserved.txt"
+        (source_dir / "main.py").write_text(
+            'import os\n'
+            f'with open(r"{marker}", "w") as f: f.write(os.environ["mode"])\n',
+            encoding="utf-8",
+        )
+
+        workflow = {
+            "tasks": [
+                {
+                    "task_key": "task_1",
+                    "notebook_task": {
+                        "notebook_path": "/Workspace/any/main",
+                        "base_parameters": {"mode": "default"},
+                    },
+                }
+            ]
+        }
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+
+        os.environ["mode"] = "from_test"
+        try:
+            runner = LocalWorkflowRunner(
+                str(source_dir), str(workflow_path), str(tmp_path)
+            )
+            runner.run_workflow()
+        finally:
+            os.environ.pop("mode", None)
+
+        assert marker.read_text(encoding="utf-8") == "from_test"
+
 
 class TestWorkflowValidation:
     def test_missing_tasks_raises(self, tmp_path):
@@ -175,6 +255,24 @@ class TestWorkflowValidation:
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
         with pytest.raises(ValueError, match="invalid notebook_path"):
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
+
+    def test_non_dict_base_parameters_raises(self, tmp_path):
+        workflow = {
+            "tasks": [
+                {
+                    "task_key": "t1",
+                    "notebook_task": {
+                        "notebook_path": "/a/b",
+                        "base_parameters": "not_a_dict",
+                    },
+                }
+            ]
+        }
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="invalid 'base_parameters' format"):
             LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
     def test_invalid_depends_on_format_raises(self, tmp_path):
