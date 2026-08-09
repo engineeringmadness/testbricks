@@ -11,7 +11,7 @@ from mock.local_workflow_runner import LocalWorkflowRunner, transform_run_comman
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
-WORKFLOW_SAMPLE_PATH = os.path.join(ROOT_DIR, "specs", "workflow_sample.json")
+WORKFLOW_SAMPLE_PATH = os.path.join(ROOT_DIR, "tests", "data", "workflow_sample.json")
 DEFAULT_BASE_PATH = os.path.join(ROOT_DIR, "tests", "data")
 
 
