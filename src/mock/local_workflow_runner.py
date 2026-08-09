@@ -22,6 +22,7 @@ class LocalWorkflowRunner:
         self._task_to_notebook = {}
         self._task_dependencies = {}
         self._notebook_insertion_order = []
+        self._notebook_base_params: dict[str, dict[str, str]] = {}
         self._parse_tasks(tasks)
 
         self.dag = self._build_dag()
@@ -50,6 +51,13 @@ class LocalWorkflowRunner:
             notebook_name = self._extract_notebook_name(notebook_path, task_key)
             if notebook_name in self._notebook_insertion_order:
                 raise ValueError(f"Duplicate notebook name found: {notebook_name}")
+
+            base_parameters = notebook_task.get("base_parameters", {})
+            if not isinstance(base_parameters, dict):
+                raise ValueError(
+                    f"Task '{task_key}' has invalid 'base_parameters' format"
+                )
+            self._notebook_base_params[notebook_name] = base_parameters
 
             depends_on = task.get("depends_on", [])
             dependency_keys = []
@@ -129,8 +137,9 @@ class LocalWorkflowRunner:
     def _execfile(self, file_path, global_namespace, local_namespace):
         self._executor().exec_file(file_path, global_namespace, top_level=False)
 
-    def run_workflow(self):
+    def run_workflow(self, extra_globals=None):
         from mock.dbutils import configure, dbutils
+        from mock.dbutils.widgets import argument_override_context
 
         configure(self.base_path, source_dir=self.source_dir)
         executor = dbutils.executor
@@ -141,6 +150,8 @@ class LocalWorkflowRunner:
         execution_globals["__run_notebook__"] = lambda path: executor.run_shared(
             path, execution_globals
         )
+        if extra_globals:
+            execution_globals.update(extra_globals)
         print(f"\nExecuting workflow: {self.workflow_json_path}\n")
         print("==========================================")
         print(self.format_dag())
@@ -148,5 +159,19 @@ class LocalWorkflowRunner:
             notebook_path = os.path.join(self.source_dir, f"{notebook_name}.py")
             if not os.path.exists(notebook_path):
                 raise FileNotFoundError(f"Notebook file not found: {notebook_path}")
+
+            base_params = self._notebook_base_params.get(notebook_name, {})
+            saved_env = {key: os.environ.get(key) for key in base_params}
+            for key, value in base_params.items():
+                os.environ.setdefault(key, str(value))
+
             execution_globals["__file__"] = notebook_path
-            executor.exec_file(notebook_path, execution_globals, top_level=True)
+            try:
+                with argument_override_context(base_params.keys()):
+                    executor.exec_file(notebook_path, execution_globals, top_level=True)
+            finally:
+                for key, original in saved_env.items():
+                    if original is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = original

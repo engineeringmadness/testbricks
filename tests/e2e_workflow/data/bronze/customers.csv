@@ -1,0 +1,6 @@
+customer_id,name,country,signup_date
+1,Alice,USA,2023-01-15
+2,Bob,UK,2023-02-20
+3,Charlie,USA,2023-03-10
+4,Diana,Canada,2023-04-05
+5,Eve,USA,2023-05-22
