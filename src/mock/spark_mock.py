@@ -1,8 +1,8 @@
 from pyspark.sql import SparkSession
 from .data_frame_reader import DataFrameReader
 from .data_frame_wrapper import DataFrameWrapper
+from .sql_gateway import SqlGateway
 from .table_catalog import TableCatalog
-import os
 
 
 class SparkMock:
@@ -10,6 +10,7 @@ class SparkMock:
         self._base_path = base_path
         self._spark_session = SparkSession.builder.appName("SparkMock").getOrCreate()
         self._catalog = TableCatalog(base_path, self._spark_session)
+        self._sql_gateway = SqlGateway(self)
         self._read = None
         self._catalog.load_all()
 
@@ -20,9 +21,7 @@ class SparkMock:
         return self._read
 
     def sql(self, query):
-        modified_query = query.replace(".", "_")
-        df = self._spark_session.sql(modified_query)
-        return DataFrameWrapper(self, df)
+        return self._sql_gateway.execute(query)
 
     def parallelize(self, c, numSlices=None):
         return DataFrameWrapper(
