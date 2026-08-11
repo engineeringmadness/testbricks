@@ -45,10 +45,11 @@ class TestReadTable:
         df = spark.read.option("header", "true").table("f1_data.drivers")
         assert df.count() == 21, "DataFrame should have 21 rows"
 
-    def test_read_table_without_header_option_treats_header_as_data(self, spark):
+    def test_read_table_defaults_to_header_true(self, spark):
         df = spark.read.table("f1_data.drivers")
-        # Spark's default CSV reader infers the header, so row count stays 21.
+        # Catalog defaults header=true / inferSchema=true when options omitted.
         assert df.count() == 21
+        assert "Abbreviation" in df.columns
 
     def test_read_table_invalid_table_name_raises(self, spark):
         with pytest.raises(ValueError, match="Invalid table name format"):
@@ -94,6 +95,17 @@ class TestWriteTable:
 
         csv_path = os.path.join(temp_spark._base_path, "schema1", "table1.csv")
         assert os.path.exists(csv_path)
+
+    def test_write_table_alias(self, temp_spark):
+        df = _make_df(temp_spark, [("A", 1)], ["c1", "c2"])
+        df.write.mode("overwrite").table("schema1.table1")
+        assert temp_spark.read.table("schema1.table1").count() == 1
+
+    def test_insert_into_appends(self, temp_spark):
+        df = _make_df(temp_spark, [("A", 1)], ["c1", "c2"])
+        df.write.mode("overwrite").saveAsTable("schema1.table1")
+        df.write.insertInto("schema1.table1")
+        assert temp_spark.read.table("schema1.table1").count() == 2
 
 
 class TestWriteTransformedTable:
