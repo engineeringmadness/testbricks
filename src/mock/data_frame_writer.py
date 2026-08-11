@@ -1,6 +1,3 @@
-import os
-
-
 class DataFrameWriter:
     def __init__(self, spark_mock, dataframe):
         self._spark = spark_mock
