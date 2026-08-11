@@ -95,6 +95,58 @@ class TestWriteTable:
         csv_path = os.path.join(temp_spark._base_path, "schema1", "table1.csv")
         assert os.path.exists(csv_path)
 
+    def test_save_as_table_append_to_missing_table_creates_rows(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        df.write.mode("append").saveAsTable("default.people")
+
+        result = temp_spark.sql("SELECT * FROM default_people")
+        assert result.count() == 1
+        assert {row.Name for row in result.collect()} == {"Alice"}
+
+    def test_save_as_table_append_adds_rows_to_existing_table(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30), ("Bob", 25)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Charlie", 35)], ["Name", "Age"])
+        second.write.mode("append").saveAsTable("default.people")
+
+        result = temp_spark.sql("SELECT * FROM default_people")
+        assert result.count() == 3
+        assert {row.Name for row in result.collect()} == {"Alice", "Bob", "Charlie"}
+
+        read_back = temp_spark.read.option("header", "true").table("default.people")
+        assert read_back.count() == 3
+
+    def test_save_as_table_overwrite_still_replaces_rows(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30), ("Bob", 25)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Charlie", 35)], ["Name", "Age"])
+        second.write.mode("overwrite").saveAsTable("default.people")
+
+        result = temp_spark.sql("SELECT * FROM default_people")
+        assert result.count() == 1
+        assert {row.Name for row in result.collect()} == {"Charlie"}
+
+    def test_save_as_table_default_mode_still_replaces_rows(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Bob", 25)], ["Name", "Age"])
+        second.write.saveAsTable("default.people")
+
+        result = temp_spark.sql("SELECT * FROM default_people")
+        assert result.count() == 1
+        assert {row.Name for row in result.collect()} == {"Bob"}
+
+    def test_save_as_table_append_schema_mismatch_raises(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Charlie",)], ["Name"])
+        with pytest.raises(ValueError, match="schema mismatch"):
+            second.write.mode("append").saveAsTable("default.people")
+
 
 class TestWriteTransformedTable:
     def test_write_transformed_table_creates_expected_csv(self, spark):
