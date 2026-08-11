@@ -58,7 +58,8 @@ Notebook / tests
        ▼
    SparkMock  ──read──► DataFrameReader
        │                      │
-       ├──write──► DataFrameWriter (saveAsTable / table / insertInto)
+       │         DataFrameWrapper.write ──► DataFrameWriter
+       │              (saveAsTable / table / insertInto)
        │
        ├──sql──► SqlGateway  (SELECT + subset DML)
        │
