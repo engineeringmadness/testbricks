@@ -1,97 +1,82 @@
-# SparkMock Improvements Design — `saveAsTable` Append Mode
+# SparkMock Catalog Refactor + `saveAsTable` Append Mode
 
 **Date:** 2026-08-11  
-**Status:** Approved for implementation  
-**Scope:** Enhance `DataFrameWriter.saveAsTable()` to honor `mode("append")` against CSV + temp views.  
+**Status:** Implemented  
+**Scope:**
+1. Shared CSV/temp-view **catalog** for SparkMock table I/O
+2. `DataFrameWriter.saveAsTable()` honors `mode("append")`
+
 **Out of scope:**
 - `DbutilsMock`, `LocalWorkflowRunner`, notebook executor
 - SQL DDL/DML: `DELETE`, `MERGE`, `UPDATE`, `INSERT INTO`, `CREATE TABLE`, `DROP TABLE`
 - Delta Lake features: time travel, `OPTIMIZE`, CDF, Z-ORDER, transaction log
-- SQL identifier rewriting, `GroupedData` wrapping, catalog refactor (deferred)
+- SQL identifier rewriting, `GroupedData` wrapping
 
-## Goal
+## Goals
 
-Notebooks commonly write with:
+1. Centralize `schema.table` → CSV path / temp-view mapping so reader, writer, and startup load share one code path.
+2. Keep append-mode `saveAsTable` behavior working through that catalog.
 
-```python
-df.write.mode("append").saveAsTable("schema.table")
-df.write.mode("overwrite").saveAsTable("schema.table")
+## Architecture
+
+```
+src/mock/
+  spark_mock.py              # façade; owns TableCatalog
+  data_frame_reader.py       # read.table → catalog.read_csv
+  data_frame_writer.py       # saveAsTable → catalog.save_dataframe
+  data_frame_wrapper.py
+  catalog/
+    __init__.py
+    identifier.py            # TableIdentifier.parse("schema.table")
+    table_catalog.py         # load_all / read_csv / save_dataframe
+    errors.py                # SparkMockError, InvalidTableNameError, SchemaMismatchError
 ```
 
-Today `saveAsTable` always overwrites the CSV via pandas and ignores `mode()`. This change makes **`append`** work. Other modes keep today’s overwrite behavior (explicit `overwrite` and the default when mode is unset).
+### Responsibilities
 
-## Current Behavior
+| Component | Role |
+|---|---|
+| `TableIdentifier` | Parse two-part names; expose `view_name`, `relative_csv_path` |
+| `TableCatalog` | Resolve paths; discover CSVs at startup; read/write CSV; refresh temp views |
+| `SparkMock` | Build session + catalog; expose `read` / `sql` / `catalog` |
+| `DataFrameReader` / `DataFrameWriter` | Thin Spark-shaped API over the catalog |
 
-```python
-# data_frame_writer.py — mode is stored but unused in saveAsTable
-pandas_df.to_csv(csv_path, ...)  # always replaces file
-self._dataframe.createOrReplaceTempView(f"{schema}_{table}")  # view = new rows only
+### Data flow
+
+```
+Startup:  SparkMock(base) → TableCatalog.load_all() → temp views
+Read:     spark.read.table("s.t") → TableIdentifier → catalog.read_csv
+Write:    df.write.mode(...).saveAsTable("s.t") → catalog.save_dataframe
+          → atomic CSV write + createOrReplaceTempView
 ```
 
-## Target Behavior
+## `saveAsTable` modes
 
 | `mode` | CSV exists? | Behavior |
 |---|---|---|
-| `"append"` | No | Create CSV + temp view from the DataFrame (same as first write) |
-| `"append"` | Yes | Append rows to existing CSV; refresh temp view with **combined** data |
-| `"overwrite"` / `None` / other | any | Replace CSV + temp view (unchanged from today) |
+| `"append"` | No | Create CSV + temp view from the DataFrame |
+| `"append"` | Yes | Append rows; refresh temp view with **combined** data |
+| `"overwrite"` / `None` / other | any | Replace CSV + temp view |
 
-### Append rules
+Append requires matching column names (order may differ). Mismatch raises `SchemaMismatchError` (subclass of `ValueError`).
 
-1. Read existing CSV with `header=True` (same convention as mock table writes).
-2. Require column names to match (order may differ — align to existing column order before concat).
-3. On schema mismatch (missing/extra columns), raise `ValueError` with a clear message.
-4. Write a single CSV (header once) via pandas; then `createOrReplaceTempView` from the combined Spark DataFrame so `spark.sql` and later reads see all rows.
-5. Atomicity: write to a temp file in the schema directory, then `os.replace` onto the target CSV.
+## Explicitly ignored
 
-### Explicitly ignored
+- Delta time travel, `OPTIMIZE`, `VACUUM`, CDF
+- SQL `INSERT INTO` / `MERGE` / `DELETE` / `UPDATE`
+- `ignore` / `errorifexists` write modes
 
-- Delta time travel (`VERSION AS OF`, `@v`, etc.)
-- `OPTIMIZE`, `VACUUM`, CDF
-- `INSERT INTO` / `MERGE` / `DELETE` / `UPDATE` SQL
-- `ignore` / `errorifexists` write modes (not implemented; treated like overwrite if somehow passed, or left as today’s overwrite path)
+## Testing
 
-## Implementation
-
-Single-file change in `src/mock/data_frame_writer.py` inside `saveAsTable`:
-
-```text
-parse schema.table
-ensure schema directory
-csv_path = base/schema/table.csv
-new_pdf = dataframe.toPandas()
-
-if mode == "append" and csv exists:
-    existing_pdf = pandas.read_csv(csv_path)
-    validate columns
-    combined = concat([existing, new aligned to existing columns])
-else:
-    combined = new_pdf
-
-write combined to csv_path (temp + replace)
-spark.createDataFrame(combined) or read back → createOrReplaceTempView(schema_table)
-```
-
-Prefer refreshing the temp view from the combined pandas frame via `spark_session.createDataFrame` so append does not leave the view showing only the latest batch.
-
-## Testing Plan
-
-Add to `tests/test_basic.py` (or a focused `tests/test_save_as_table.py`):
-
-| Test | Expectation |
+| Suite | Coverage |
 |---|---|
-| Append to missing table | Creates CSV with new rows; sql/read sees them |
-| Append to existing table | Row count = old + new; values from both batches present |
-| Append then read via `read.table` | Same row count as sql temp view |
-| Overwrite still replaces | Second `mode("overwrite")` write → only new rows |
-| Default (no mode) still replaces | Same as overwrite today |
-| Append schema mismatch | `ValueError` |
+| `tests/test_catalog.py` | Identifier parsing, load_all, path/exists, overwrite/append, schema mismatch |
+| `tests/test_basic.py` | Existing read/sql/write + append integration |
+| E2E workflow | Unchanged; still uses `saveAsTable` overwrite |
 
-Regression: existing `TestWriteTable` / E2E workflow tests remain green.
+## Success criteria
 
-## Success Criteria
-
-1. `df.write.mode("append").saveAsTable("s.t")` appends rows to `{base}/s/t.csv` and updates `s_t` temp view.
-2. `mode("overwrite")` and unset mode continue to replace the table.
-3. No new SQL DML/DDL or Delta-feature surface area.
-4. Full suite passes: `python3.14 -m coverage run -m pytest tests/ -v`
+1. No duplicated `schema.table` parsing or path joins in reader/writer/startup.
+2. `mode("append").saveAsTable` still appends CSV + refreshes the temp view.
+3. Invalid names / append schema mismatch raise catalog errors (compatible with `ValueError`).
+4. Full suite green: `python3.14 -m coverage run -m pytest tests/ -v`
