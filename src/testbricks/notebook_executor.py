@@ -3,7 +3,7 @@ import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from mock.notebook_exceptions import NotebookExit
+from testbricks.notebook_exceptions import NotebookExit
 
 RUN_COMMAND_PATTERN = re.compile(
     r"^\s*#\s*(?:MAGIC\s+)?%run\s+(.+?)\s*$",
@@ -51,7 +51,7 @@ class NotebookExecutor:
             yield
 
     def resolve_path(self, path, caller_file=None):
-        from mock.dbutils.errors import DbutilsError
+        from testbricks.dbutils.errors import DbutilsError
 
         normalized_path = path.strip()
         if len(normalized_path) >= 2 and normalized_path[0] == normalized_path[-1]:
@@ -119,7 +119,7 @@ class NotebookExecutor:
         notebook_path = self.resolve_path(path, caller_file=caller_file)
         arguments = arguments or {}
 
-        from mock.dbutils.widgets import argument_override_context
+        from testbricks.dbutils.widgets import argument_override_context
 
         for key, value in arguments.items():
             os.environ[key] = str(value)

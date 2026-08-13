@@ -7,7 +7,7 @@ from .widgets import WidgetsMock
 
 class DbutilsMock:
     def __init__(self):
-        from mock.notebook_executor import NotebookExecutor
+        from testbricks.notebook_executor import NotebookExecutor
 
         self._path_resolver = PathResolver()
         self._source_dir = None

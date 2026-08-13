@@ -2,13 +2,13 @@ import os
 import shutil
 import sys
 
-# Ensure src is on the path so `mock` can be imported during pytest collection.
+# Ensure src is on the path so `testbricks` can be imported during pytest collection.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import pytest
 
-from mock.local_workflow_runner import LocalWorkflowRunner
-from mock.spark_mock import SparkMock
+from testbricks.local_workflow_runner import LocalWorkflowRunner
+from testbricks.spark_mock import SparkMock
 
 
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))

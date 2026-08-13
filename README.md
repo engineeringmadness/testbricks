@@ -18,8 +18,8 @@ pip install testbricks
 PySpark needs a JDK on `PATH` (Java 8+). Create a `SparkMock`, import `dbutils`, and run a Databricks workflow JSON with `LocalWorkflowRunner`:
 
 ```python
-from mock import SparkMock, LocalWorkflowRunner
-from mock.dbutils import dbutils
+from testbricks import SparkMock, LocalWorkflowRunner
+from testbricks.dbutils import dbutils
 
 # CSV tables live under {base_path}/{schema}/{table}.csv
 # e.g. ./data/bronze/customers.csv  →  spark.read.table("bronze.customers")

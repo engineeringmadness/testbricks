@@ -1,13 +1,13 @@
 import sys
 import os
 
-# Ensure src is on the path so `mock` can be imported during pytest collection.
+# Ensure src is on the path so `testbricks` can be imported during pytest collection.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 import shutil
 
-from mock.spark_mock import SparkMock
+from testbricks.spark_mock import SparkMock
 
 
 TEST_DIR = "tests/data"
@@ -35,7 +35,7 @@ def temp_spark(tmp_path):
 
 def _make_df(spark_mock, rows, columns):
     """Create a DataFrameWrapper from local data without using parallelize."""
-    from mock.data_frame_wrapper import DataFrameWrapper
+    from testbricks.data_frame_wrapper import DataFrameWrapper
     spark_df = spark_mock._spark_session.createDataFrame(rows, schema=columns)
     return DataFrameWrapper(spark_mock, spark_df)
 

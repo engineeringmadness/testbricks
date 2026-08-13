@@ -5,9 +5,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 
-from mock.dbutils import DbutilsError, configure, dbutils
-from mock.dbutils.path_resolver import PathResolver
-from mock.local_workflow_runner import LocalWorkflowRunner
+from testbricks.dbutils import DbutilsError, configure, dbutils
+from testbricks.dbutils.path_resolver import PathResolver
+from testbricks.local_workflow_runner import LocalWorkflowRunner
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +26,7 @@ class TestConfiguration:
         )
 
     def test_unconfigured_fs_operation_raises(self):
-        from mock.dbutils.dbutils_mock import DbutilsMock
+        from testbricks.dbutils.dbutils_mock import DbutilsMock
 
         unconfigured = DbutilsMock()
         with pytest.raises(DbutilsError, match="not configured"):

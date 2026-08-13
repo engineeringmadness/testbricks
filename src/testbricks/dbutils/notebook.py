@@ -1,4 +1,4 @@
-from mock.notebook_exceptions import NotebookExit
+from testbricks.notebook_exceptions import NotebookExit
 
 
 class NotebookMock:
