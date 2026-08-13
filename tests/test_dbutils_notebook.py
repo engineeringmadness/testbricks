@@ -5,8 +5,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 
-from mock.dbutils import DbutilsError, configure, dbutils
-from mock.notebook_exceptions import NotebookExit
+from testbricks.dbutils import DbutilsError, configure, dbutils
+from testbricks.notebook_exceptions import NotebookExit
 
 
 @pytest.fixture(autouse=True)

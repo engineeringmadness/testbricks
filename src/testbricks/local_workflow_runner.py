@@ -2,7 +2,7 @@ import json
 import os
 from graphlib import CycleError, TopologicalSorter
 
-from mock.notebook_executor import transform_run_commands
+from testbricks.notebook_executor import transform_run_commands
 
 # Re-export for backward compatibility.
 __all__ = ["LocalWorkflowRunner", "transform_run_commands"]
@@ -127,7 +127,7 @@ class LocalWorkflowRunner:
         return "\n".join(lines)
 
     def _executor(self):
-        from mock.dbutils import dbutils
+        from testbricks.dbutils import dbutils
 
         return dbutils.executor
 
@@ -138,8 +138,8 @@ class LocalWorkflowRunner:
         self._executor().exec_file(file_path, global_namespace, top_level=False)
 
     def run_workflow(self, extra_globals=None):
-        from mock.dbutils import configure, dbutils
-        from mock.dbutils.widgets import argument_override_context
+        from testbricks.dbutils import configure, dbutils
+        from testbricks.dbutils.widgets import argument_override_context
 
         configure(self.base_path, source_dir=self.source_dir)
         executor = dbutils.executor

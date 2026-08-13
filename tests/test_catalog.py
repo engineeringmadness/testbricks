@@ -5,13 +5,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 
-from mock.catalog import (
+from testbricks.catalog import (
     InvalidTableNameError,
     SchemaMismatchError,
     TableCatalog,
     TableIdentifier,
 )
-from mock.spark_mock import SparkMock
+from testbricks.spark_mock import SparkMock
 
 
 class TestTableIdentifier:

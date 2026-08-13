@@ -15,7 +15,7 @@ The proxy replaces these functionalities with CSV files and Spark temp views.
 
 ## Directory structure
 
-All code is placed inside `src` directory and all modules are placed inside their own folders with `__init__.py` files. The main mock Spark object / proxy object is inside `mock` folder
+All code is placed inside `src` directory and all modules are placed inside their own folders with `__init__.py` files. The main mock Spark object / proxy object is inside the `testbricks` package.
 
 
 

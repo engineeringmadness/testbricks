@@ -1,13 +1,13 @@
 import sys
 import os
 
-# Ensure src is on the path so `mock` can be imported during pytest collection.
+# Ensure src is on the path so `testbricks` can be imported during pytest collection.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import json
 import pytest
 
-from mock.local_workflow_runner import LocalWorkflowRunner, transform_run_commands
+from testbricks.local_workflow_runner import LocalWorkflowRunner, transform_run_commands
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
