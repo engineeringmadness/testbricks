@@ -45,10 +45,10 @@ class TestReadTable:
         df = spark.read.option("header", "true").table("f1_data.drivers")
         assert df.count() == 21, "DataFrame should have 21 rows"
 
-    def test_read_table_without_header_option_treats_header_as_data(self, spark):
+    def test_read_table_defaults_header_and_infers_schema(self, spark):
         df = spark.read.table("f1_data.drivers")
-        # Spark's default CSV reader infers the header, so row count stays 21.
         assert df.count() == 21
+        assert "Abbreviation" in df.columns
 
     def test_read_table_invalid_table_name_raises(self, spark):
         with pytest.raises(ValueError, match="Invalid table name format"):
@@ -67,6 +67,81 @@ class TestReadSql:
     def test_read_sql_select_all_returns_all_rows(self, spark):
         df = spark.sql("SELECT * FROM f1_data_drivers")
         assert df.count() == 21
+
+    def test_read_sql_dotted_table_name(self, spark):
+        df = spark.sql("SELECT * FROM f1_data.drivers")
+        assert df.count() == 21
+
+    def test_read_sql_backticks_and_three_part_name(self, spark):
+        df = spark.sql("SELECT * FROM `f1_data`.`drivers`")
+        assert df.count() == 21
+        three_part = spark.sql("SELECT * FROM hive_metastore.f1_data.drivers")
+        assert three_part.count() == 21
+
+    def test_read_sql_preserves_decimal_literal(self, spark):
+        df = spark.sql("SELECT 1.5 AS v")
+        assert df.collect()[0].v == 1.5
+
+    def test_sql_maintenance_commands_are_noops(self, spark):
+        df = spark.sql("OPTIMIZE f1_data.drivers")
+        assert df.count() == 0
+        assert spark.sql("REFRESH TABLE f1_data.drivers").count() == 0
+
+
+class TestSparkTableAndCreate:
+    def test_table_alias_and_three_part_read(self, spark):
+        df = spark.table("f1_data.drivers")
+        assert df.count() == 21
+        assert spark.table("main.f1_data.drivers").count() == 21
+
+    def test_create_dataframe_save_as_table(self, temp_spark):
+        df = temp_spark.createDataFrame([("Alice", 30)], ["Name", "Age"])
+        df.write.mode("overwrite").saveAsTable("default.people")
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.count() == 1
+        assert result.collect()[0].Name == "Alice"
+
+    def test_groupby_agg_save_as_table(self, temp_spark):
+        df = temp_spark.createDataFrame(
+            [("a", 1), ("a", 2), ("b", 3)],
+            ["n", "v"],
+        )
+        aggregated = df.groupBy("n").sum("v")
+        aggregated.write.mode("overwrite").saveAsTable("default.totals")
+
+        csv_path = os.path.join(temp_spark._base_path, "default", "totals.csv")
+        assert os.path.exists(csv_path)
+        result = temp_spark.sql("SELECT * FROM default.totals")
+        assert result.count() == 2
+
+
+class TestDeltaWriteShims:
+    def test_format_partition_by_overwrite_schema_save_as_table(self, temp_spark):
+        df = temp_spark.createDataFrame(
+            [("Alice", 30, "2024-01-01")],
+            ["Name", "Age", "dt"],
+        )
+        df.write.format("delta").mode("overwrite").option(
+            "overwriteSchema", "true"
+        ).partitionBy("dt").saveAsTable("silver.people")
+
+        csv_path = os.path.join(temp_spark._base_path, "silver", "people.csv")
+        assert os.path.exists(csv_path)
+        result = temp_spark.sql("SELECT * FROM silver.people")
+        assert result.count() == 1
+        assert set(result.columns) == {"Name", "Age", "dt"}
+
+    def test_read_format_delta_table(self, spark):
+        df = spark.read.format("delta").table("f1_data.drivers")
+        assert df.count() == 21
+
+    def test_save_as_table_three_part_name(self, temp_spark):
+        df = temp_spark.createDataFrame([("Bob", 25)], ["Name", "Age"])
+        df.write.mode("overwrite").saveAsTable("main.default.people")
+        assert os.path.exists(
+            os.path.join(temp_spark._base_path, "default", "people.csv")
+        )
+        assert temp_spark.sql("SELECT * FROM default.people").count() == 1
 
 
 class TestWriteTable:
@@ -186,8 +261,12 @@ class TestDataFrameReader:
 class TestDataFrameWriter:
     def test_writer_mode_option_chain(self, temp_spark):
         df = _make_df(temp_spark, [(1,)], ["id"])
-        writer = df.write.mode("overwrite").option("header", "true")
+        writer = df.write.format("delta").mode("overwrite").partitionBy("id").option(
+            "header", "true"
+        )
         assert writer._mode == "overwrite"
+        assert writer._format == "delta"
+        assert writer._partition_by == ("id",)
         assert writer._options == {"header": "true"}
 
 

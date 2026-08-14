@@ -1,9 +1,9 @@
 # Incremental Delta Table Operation Support (No Major Refactor)
 
 **Date:** 2026-08-14  
-**Status:** Proposed (ideas + recommended first slice)  
-**Scope:** Further `SparkMock` / `TableCatalog` support for Databricks-style Delta table usage, without a new storage format, transaction log, or large rewrite.  
-**Explicitly excluded:** Delta `MERGE`, `UPDATE`, `DELETE` (SQL and DataFrame equivalents). Also excluded: time travel, CDF, Z-ORDER, real OPTIMIZE/VACUUM semantics.
+**Status:** Approved for implementation — Approach 1 + Approach 3  
+**Scope:** Compatibility shims, SQL identifier rewrite, Spark-like catalog façade, and optional `catalog.schema.table` names. CSV + temp views unchanged.  
+**Explicitly excluded:** Approach 2 (`INSERT INTO` / `INSERT OVERWRITE` / CTAS / `DROP TABLE` / `insertInto` / `errorIfExists` / `ignore`). Delta `MERGE`, `UPDATE`, `DELETE`. Time travel, CDF, Z-ORDER, real OPTIMIZE/VACUUM semantics.
 
 ## Current baseline
 

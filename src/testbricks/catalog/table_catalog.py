@@ -42,25 +42,38 @@ class TableCatalog:
     def exists(self, ident: TableIdentifier) -> bool:
         return os.path.exists(self.path_for(ident))
 
-    def load_all(self) -> None:
-        """Discover ``{base}/{schema}/{table}.csv`` and register temp views."""
+    def iter_schema_names(self) -> list[str]:
         if not os.path.exists(self._base_path):
-            return
-
-        for folder_name in os.listdir(self._base_path):
+            return []
+        names = []
+        for folder_name in sorted(os.listdir(self._base_path)):
             folder_path = os.path.join(self._base_path, folder_name)
-            if not os.path.isdir(folder_path):
-                continue
+            if os.path.isdir(folder_path):
+                names.append(folder_name)
+        return names
 
-            for filename in os.listdir(folder_path):
+    def iter_identifiers(self) -> list[TableIdentifier]:
+        """Discover ``{base}/{schema}/{table}.csv`` identifiers."""
+        idents: list[TableIdentifier] = []
+        if not os.path.exists(self._base_path):
+            return idents
+
+        for folder_name in self.iter_schema_names():
+            folder_path = os.path.join(self._base_path, folder_name)
+            for filename in sorted(os.listdir(folder_path)):
                 if not filename.endswith(".csv"):
                     continue
                 table = os.path.splitext(filename)[0]
-                ident = TableIdentifier(schema=folder_name, table=table)
-                df = self._spark.read.csv(
-                    self.path_for(ident), header=True, inferSchema=True
-                )
-                df.createOrReplaceTempView(ident.view_name)
+                idents.append(TableIdentifier(schema=folder_name, table=table))
+        return idents
+
+    def load_all(self) -> None:
+        """Discover ``{base}/{schema}/{table}.csv`` and register temp views."""
+        for ident in self.iter_identifiers():
+            df = self._spark.read.csv(
+                self.path_for(ident), header=True, inferSchema=True
+            )
+            df.createOrReplaceTempView(ident.view_name)
 
     def read_csv(
         self,
