@@ -7,6 +7,16 @@ class DataFrameWriter:
         self._dataframe = dataframe
         self._options = {}
         self._mode = None
+        self._format = None
+        self._partition_by = ()
+
+    def format(self, source):
+        self._format = source
+        return self
+
+    def partitionBy(self, *cols):
+        self._partition_by = cols
+        return self
 
     def option(self, key, value):
         self._options[key] = value
@@ -40,7 +50,7 @@ class DataFrameWriter:
         if "header" in self._options:
             write_header = self._options["header"].lower() == "true"
 
-        self._spark.catalog.save_dataframe(
+        self._spark._catalog.save_dataframe(
             ident,
             self._dataframe,
             mode=self._mode,

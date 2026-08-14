@@ -23,8 +23,23 @@ class TestTableIdentifier:
         assert ident.relative_csv_path == "bronze/customers.csv"
         assert str(ident) == "bronze.customers"
 
+    def test_parse_three_part_name(self):
+        ident = TableIdentifier.parse("main.bronze.customers")
+        assert ident.catalog == "main"
+        assert ident.schema == "bronze"
+        assert ident.table == "customers"
+        assert ident.view_name == "bronze_customers"
+        assert ident.relative_csv_path == "bronze/customers.csv"
+        assert str(ident) == "main.bronze.customers"
+
+    def test_parse_backticks(self):
+        ident = TableIdentifier.parse("`bronze`.`customers`")
+        assert ident.schema == "bronze"
+        assert ident.table == "customers"
+        assert ident.catalog is None
+
     def test_parse_invalid_names(self):
-        for bad in ("customers", "a.b.c", "", ".table", "schema."):
+        for bad in ("customers", "a.b.c.d", "", ".table", "schema.", "a..b"):
             with pytest.raises(InvalidTableNameError, match="Invalid table name format"):
                 TableIdentifier.parse(bad)
 
@@ -85,3 +100,75 @@ class TestTableCatalog:
         second = spark.createDataFrame([("Charlie",)], ["Name"])
         with pytest.raises(SchemaMismatchError, match="schema mismatch"):
             cat.save_dataframe(ident, second, mode="append")
+
+
+class TestSqlRewrite:
+    def test_rewrites_from_and_join(self):
+        from testbricks.catalog import rewrite_from_join_identifiers
+
+        query = (
+            "SELECT * FROM bronze.customers c "
+            "JOIN silver.orders o ON c.id = o.customer_id"
+        )
+        rewritten = rewrite_from_join_identifiers(query)
+        assert "FROM bronze_customers c" in rewritten
+        assert "JOIN silver_orders o" in rewritten
+
+    def test_rewrites_backticks_and_three_part_names(self):
+        from testbricks.catalog import rewrite_from_join_identifiers
+
+        query = "SELECT * FROM `bronze`.`customers` JOIN main.silver.orders"
+        rewritten = rewrite_from_join_identifiers(query)
+        assert "FROM bronze_customers" in rewritten
+        assert "JOIN silver_orders" in rewritten
+
+    def test_leaves_decimal_literals_unchanged(self):
+        from testbricks.catalog import rewrite_from_join_identifiers
+
+        query = "SELECT 1.5 AS v FROM bronze.customers"
+        assert rewrite_from_join_identifiers(query) == "SELECT 1.5 AS v FROM bronze_customers"
+
+    def test_leaves_view_names_unchanged(self):
+        from testbricks.catalog import rewrite_from_join_identifiers
+
+        query = "SELECT * FROM bronze_customers"
+        assert rewrite_from_join_identifiers(query) == query
+
+    def test_maintenance_noop_detection(self):
+        from testbricks.catalog import is_maintenance_noop
+
+        assert is_maintenance_noop("OPTIMIZE bronze.customers")
+        assert is_maintenance_noop("  vacuum bronze.customers")
+        assert is_maintenance_noop("REFRESH TABLE bronze.customers")
+        assert is_maintenance_noop("ANALYZE TABLE bronze.customers COMPUTE STATISTICS")
+        assert not is_maintenance_noop("SELECT * FROM bronze.customers")
+
+
+class TestCatalogFacade:
+    def test_table_exists_list_tables_and_databases(self, tmp_path):
+        base = tmp_path / "data"
+        spark_mock = SparkMock(str(base))
+        df = spark_mock.createDataFrame([("Alice", 30)], ["Name", "Age"])
+        df.write.mode("overwrite").saveAsTable("default.people")
+
+        assert spark_mock.catalog.tableExists("default.people")
+        assert spark_mock.catalog.tableExists("main.default.people")
+        assert spark_mock.catalog.tableExists("people", "default")
+        assert not spark_mock.catalog.tableExists("default.missing")
+        assert not spark_mock.catalog.tableExists("people")
+
+        tables = spark_mock.catalog.listTables("default")
+        assert [table.name for table in tables] == ["people"]
+        assert tables[0].namespace == ["default"]
+
+        databases = spark_mock.catalog.listDatabases()
+        assert "default" in [database.name for database in databases]
+
+        filtered = spark_mock.catalog.listTables(pattern="peo*")
+        assert [table.name for table in filtered] == ["people"]
+        assert [db.name for db in spark_mock.catalog.listDatabases(pattern="def*")] == [
+            "default"
+        ]
+        ident = TableIdentifier.parse("default.people")
+        assert spark_mock.catalog.exists(ident)
+
