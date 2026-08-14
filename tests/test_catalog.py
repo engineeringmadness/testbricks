@@ -164,3 +164,11 @@ class TestCatalogFacade:
         databases = spark_mock.catalog.listDatabases()
         assert "default" in [database.name for database in databases]
 
+        filtered = spark_mock.catalog.listTables(pattern="peo*")
+        assert [table.name for table in filtered] == ["people"]
+        assert [db.name for db in spark_mock.catalog.listDatabases(pattern="def*")] == [
+            "default"
+        ]
+        ident = TableIdentifier.parse("default.people")
+        assert spark_mock.catalog.exists(ident)
+

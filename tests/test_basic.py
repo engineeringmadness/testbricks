@@ -94,6 +94,11 @@ class TestSparkTableAndCreate:
         assert df.count() == 21
         assert spark.table("main.f1_data.drivers").count() == 21
 
+    def test_range_and_spark_context(self, temp_spark):
+        df = temp_spark.range(3)
+        assert df.count() == 3
+        assert temp_spark.sparkContext is not None
+
     def test_create_dataframe_save_as_table(self, temp_spark):
         df = temp_spark.createDataFrame([("Alice", 30)], ["Name", "Age"])
         df.write.mode("overwrite").saveAsTable("default.people")
