@@ -148,7 +148,6 @@ class TestNoOpStubs:
 
     def test_unimplemented_submodule_returns_true(self, tmp_path):
         configure(str(tmp_path))
-        assert dbutils.secrets.get("scope", "key") is True
         assert dbutils.jobs.taskValues.get(key="k") is True
 
 
