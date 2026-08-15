@@ -1,5 +1,14 @@
 # Testbricks
 
+<img width="150" height="auto" alt="image" src="https://github.com/engineeringmadness/testbricks-website/blob/main/public/favicon.svg" />
+
+
+
+![workflow](https://github.com/engineeringmadness/testbricks/actions/workflows/tests.yml/badge.svg)
+
+![workflow](https://github.com/engineeringmadness/testbricks/actions/workflows/release.yml/badge.svg)
+
+
 Databricks notebooks are awsome way for interactive development. The inbuilt IDE is fantastic, stable, fully featured and has the right AI assistance levels. So what's the problem ?
 
 Testing is the main problem, more specifically Unit testing.
