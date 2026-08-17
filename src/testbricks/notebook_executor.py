@@ -5,6 +5,7 @@ import sys
 from contextlib import contextmanager
 from contextvars import ContextVar
 
+from testbricks.dbutils.path_resolver import strip_known_prefix
 from testbricks.notebook_exceptions import NotebookExit, ShellCommandError
 
 RUN_COMMAND_PATTERN = re.compile(
@@ -23,13 +24,6 @@ def _strip_matching_quotes(value):
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
         return value[1:-1].strip()
     return value
-
-
-def _strip_known_prefix(path, prefixes):
-    for prefix in prefixes:
-        if path.startswith(prefix):
-            return path[len(prefix) :]
-    return path
 
 
 def parse_run_path(raw_path, file_path):
@@ -158,7 +152,7 @@ class NotebookExecutor:
                 raise DbutilsError(
                     "source_dir not configured — required for workspace paths"
                 )
-            remainder = _strip_known_prefix(normalized_path, WORKSPACE_PREFIXES).lstrip("/")
+            remainder = strip_known_prefix(normalized_path, WORKSPACE_PREFIXES).lstrip("/")
             notebook_path = os.path.join(source_dir, remainder)
         else:
             caller_file = caller_file or _caller_file.get()

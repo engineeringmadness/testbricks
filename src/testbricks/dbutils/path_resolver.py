@@ -5,6 +5,13 @@ from .errors import DbutilsError
 _PREFIXES = ("dbfs:/", "/dbfs/", "/mnt/")
 
 
+def strip_known_prefix(path, prefixes):
+    for prefix in prefixes:
+        if path.startswith(prefix):
+            return path[len(prefix) :]
+    return path
+
+
 class PathResolver:
     def __init__(self):
         self._base_path = None
@@ -22,7 +29,7 @@ class PathResolver:
                 "dbutils not configured — call configure(base_path) first"
             )
 
-        remainder = self._strip_prefix(path).lstrip("/")
+        remainder = strip_known_prefix(path, _PREFIXES).lstrip("/")
         resolved = os.path.normpath(os.path.join(self._base_path, remainder))
         base = os.path.normpath(self._base_path)
 
@@ -30,9 +37,3 @@ class PathResolver:
             raise DbutilsError(f"path escapes base_path: {path}")
 
         return resolved
-
-    def _strip_prefix(self, path):
-        for prefix in _PREFIXES:
-            if path.startswith(prefix):
-                return path[len(prefix) :]
-        return path
