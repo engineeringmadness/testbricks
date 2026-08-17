@@ -1,7 +1,74 @@
 from pyspark.sql import DataFrame
 from pyspark.sql.group import GroupedData
 
-from .data_frame_writer import DataFrameWriter
+from .catalog import TableIdentifier
+
+
+class _IoBuilder:
+    """Shared format/option chaining used by both reader and writer."""
+
+    def __init__(self):
+        self._options = {}
+        self._format = None
+
+    def format(self, source):
+        self._format = source
+        return self
+
+    def option(self, key, value):
+        self._options[key] = value
+        return self
+
+    def options(self, **kwargs):
+        self._options.update(kwargs)
+        return self
+
+
+class DataFrameReader(_IoBuilder):
+    def __init__(self, spark_mock):
+        super().__init__()
+        self._spark = spark_mock
+
+    def table(self, table_name):
+        ident = TableIdentifier.parse(table_name)
+        merged = {"header": "true", "inferSchema": "true", **self._options}
+        df = self._spark._catalog.read_csv(ident, merged)
+        return DataFrameWrapper(self._spark, df)
+
+
+class DataFrameWriter(_IoBuilder):
+    def __init__(self, spark_mock, dataframe):
+        super().__init__()
+        self._spark = spark_mock
+        self._dataframe = dataframe
+        self._mode = None
+        self._partition_by = ()
+
+    def partitionBy(self, *cols):
+        self._partition_by = cols
+        return self
+
+    def mode(self, save_mode):
+        self._mode = save_mode
+        return self
+
+    def csv(self, path):
+        writer = self._dataframe.write
+        if self._mode:
+            writer = writer.mode(self._mode)
+        for key, value in self._options.items():
+            writer = writer.option(key, value)
+        writer.csv(self._spark._get_full_path(path))
+
+    def saveAsTable(self, table_name):
+        ident = TableIdentifier.parse(table_name)
+        header = self._options.get("header", "true").lower() == "true"
+        self._spark._catalog.save_dataframe(
+            ident,
+            self._dataframe,
+            mode=self._mode,
+            header=header,
+        )
 
 
 def _wrap_spark_result(spark_mock, result):
@@ -12,19 +79,24 @@ def _wrap_spark_result(spark_mock, result):
     return result
 
 
+def _proxy_callable(spark_mock, target, name):
+    attr = getattr(target, name)
+    if not callable(attr):
+        return attr
+
+    def wrapper(*args, **kwargs):
+        return _wrap_spark_result(spark_mock, attr(*args, **kwargs))
+
+    return wrapper
+
+
 class GroupedDataWrapper:
     def __init__(self, spark_mock, grouped):
         self._spark = spark_mock
         self._grouped = grouped
 
     def __getattr__(self, name):
-        attr = getattr(self._grouped, name)
-        if callable(attr):
-            def wrapper(*args, **kwargs):
-                return _wrap_spark_result(self._spark, attr(*args, **kwargs))
-
-            return wrapper
-        return attr
+        return _proxy_callable(self._spark, self._grouped, name)
 
 
 class DataFrameWrapper:
@@ -34,13 +106,7 @@ class DataFrameWrapper:
         self._write = None
 
     def __getattr__(self, name):
-        attr = getattr(self._dataframe, name)
-        if callable(attr):
-            def wrapper(*args, **kwargs):
-                return _wrap_spark_result(self._spark, attr(*args, **kwargs))
-
-            return wrapper
-        return attr
+        return _proxy_callable(self._spark, self._dataframe, name)
 
     @property
     def write(self):
