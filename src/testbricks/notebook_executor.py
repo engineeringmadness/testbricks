@@ -184,6 +184,7 @@ class NotebookExecutor:
 
     def _execute_source(self, source, file_path, global_namespace, local_namespace):
         transformed = transform_run_commands(source, file_path)
+        transformed = transform_sh_commands(transformed)
         exec(compile(transformed, file_path, "exec"), global_namespace, local_namespace)
 
     def exec_file(self, file_path, namespace, *, top_level=False):
@@ -191,6 +192,7 @@ class NotebookExecutor:
             with open(file_path, encoding="utf-8") as notebook_file:
                 source = notebook_file.read()
             namespace["__file__"] = file_path
+            namespace["__run_shell__"] = run_shell
             try:
                 self._execute_source(source, file_path, namespace, namespace)
             except NotebookExit as exc:

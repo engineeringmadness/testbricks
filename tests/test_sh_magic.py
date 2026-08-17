@@ -7,6 +7,7 @@ import pytest
 
 from unittest.mock import patch
 
+from testbricks.dbutils import configure, dbutils
 from testbricks.notebook_exceptions import NotebookExit, ShellCommandError
 from testbricks.notebook_executor import (
     run_shell,
@@ -108,4 +109,56 @@ class TestRunShell:
         ):
             with pytest.raises(ShellCommandError, match="bash"):
                 run_shell("echo hi")
+
+
+@pytest.fixture
+def notebook_executor(tmp_path):
+    configure(str(tmp_path), source_dir=str(tmp_path))
+    yield dbutils.executor
+    dbutils.widgets.removeAll()
+
+
+class TestExecFileShMagic:
+    def test_executes_sh_and_continues(self, tmp_path, notebook_executor, capsys):
+        notebook = tmp_path / "main.py"
+        notebook.write_text(
+            "# %sh echo from_sh\nAFTER = True\n",
+            encoding="utf-8",
+        )
+        namespace = {"__name__": "__main__"}
+        notebook_executor.exec_file(str(notebook), namespace, top_level=True)
+        captured = capsys.readouterr()
+        assert "from_sh" in captured.out
+        assert namespace["AFTER"] is True
+
+    def test_dash_e_stops_later_python(self, tmp_path, notebook_executor):
+        notebook = tmp_path / "main.py"
+        notebook.write_text(
+            "# %sh -e exit 1\nAFTER = True\n",
+            encoding="utf-8",
+        )
+        namespace = {"__name__": "__main__"}
+        with pytest.raises(ShellCommandError):
+            notebook_executor.exec_file(str(notebook), namespace, top_level=True)
+        assert "AFTER" not in namespace
+
+    def test_percent_run_child_can_use_sh(self, tmp_path, notebook_executor, capsys):
+        (tmp_path / "child.py").write_text("# %sh echo from_child\n", encoding="utf-8")
+        main = tmp_path / "main.py"
+        main.write_text("# %run ./child\nAFTER = True\n", encoding="utf-8")
+        namespace = {"__name__": "__main__", "__file__": str(main)}
+        namespace["__run_notebook__"] = lambda path: notebook_executor.run_shared(
+            path, namespace
+        )
+        notebook_executor.exec_file(str(main), namespace, top_level=True)
+        captured = capsys.readouterr()
+        assert "from_child" in captured.out
+        assert namespace["AFTER"] is True
+
+    def test_isolated_run_propagates_shell_error(self, tmp_path, notebook_executor):
+        (tmp_path / "child.py").write_text("# %sh -e exit 2\n", encoding="utf-8")
+        parent = tmp_path / "parent.py"
+        with notebook_executor.caller_context(str(parent)):
+            with pytest.raises(ShellCommandError):
+                notebook_executor.run_isolated("./child")
 
