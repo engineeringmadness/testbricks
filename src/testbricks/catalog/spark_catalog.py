@@ -12,22 +12,23 @@ from .identifier import TableIdentifier
 from .table_catalog import TableCatalog
 
 
-class CatalogFacade:
-    """Subset of ``pyspark.sql.catalog.Catalog`` used by Databricks notebooks.
+def _matches(name: str, pattern: Optional[str]) -> bool:
+    return pattern is None or fnmatch.fnmatch(name, pattern)
 
-    Unknown attributes fall through to ``TableCatalog`` so existing
-    ``spark.catalog.read_csv`` / ``save_dataframe`` call sites keep working.
-    """
+
+class CatalogFacade:
+    """Subset of ``pyspark.sql.catalog.Catalog`` used by Databricks notebooks."""
 
     def __init__(self, tables: TableCatalog):
         self._tables = tables
 
     def tableExists(self, tableName: str, dbName: Optional[str] = None) -> bool:
-        if dbName is not None:
-            ident = TableIdentifier(schema=dbName, table=tableName)
-            return self._tables.exists(ident)
         try:
-            ident = TableIdentifier.parse(tableName)
+            ident = (
+                TableIdentifier(schema=dbName, table=tableName)
+                if dbName is not None
+                else TableIdentifier.parse(tableName)
+            )
         except InvalidTableNameError:
             return False
         return self._tables.exists(ident)
@@ -41,7 +42,7 @@ class CatalogFacade:
         for ident in self._tables.iter_identifiers():
             if dbName is not None and ident.schema != dbName:
                 continue
-            if pattern is not None and not fnmatch.fnmatch(ident.table, pattern):
+            if not _matches(ident.table, pattern):
                 continue
             tables.append(
                 Table(
@@ -56,20 +57,16 @@ class CatalogFacade:
         return tables
 
     def listDatabases(self, pattern: Optional[str] = None) -> List[Database]:
-        databases = []
-        for name in self._tables.iter_schema_names():
-            if pattern is not None and not fnmatch.fnmatch(name, pattern):
-                continue
-            location = self._tables.full_path(name)
-            databases.append(
-                Database(
-                    name=name,
-                    catalog=None,
-                    description=None,
-                    locationUri=location,
-                )
+        return [
+            Database(
+                name=name,
+                catalog=None,
+                description=None,
+                locationUri=self._tables.full_path(name),
             )
-        return databases
+            for name in self._tables.iter_schema_names()
+            if _matches(name, pattern)
+        ]
 
     def __getattr__(self, name):
         return getattr(self._tables, name)

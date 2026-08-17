@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .identifier import TableIdentifier, _split_qualified_name
+from .identifier import TableIdentifier
 
 _IDENT = r"(?:`[^`]+`|[A-Za-z_][\w]*)"
 _TABLE_REF = rf"{_IDENT}(?:\s*\.\s*{_IDENT}){{1,2}}"
@@ -23,9 +23,7 @@ def is_maintenance_noop(query: str) -> bool:
 
 
 def _ref_to_view_name(ref: str) -> str:
-    parts = [part for part in _split_qualified_name(ref) if part]
-    ident = TableIdentifier.parse(".".join(parts))
-    return ident.view_name
+    return TableIdentifier.parse(ref).view_name
 
 
 def rewrite_from_join_identifiers(query: str) -> str:
