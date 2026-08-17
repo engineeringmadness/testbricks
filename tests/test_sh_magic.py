@@ -71,6 +71,12 @@ class TestTransformShCommands:
         assert "__run_notebook__('./helpers/setup')" in transformed
         assert "__run_shell__('echo hi', fail_on_error=False)" in transformed
 
+    def test_new_magic_ends_sh_block(self):
+        source = "# MAGIC %sh echo hi\n# MAGIC %run ./other\n"
+        transformed = transform_sh_commands(source)
+        assert "__run_shell__('echo hi', fail_on_error=False)" in transformed
+        assert "# MAGIC %run ./other" in transformed
+
 
 class TestRunShell:
     def test_prints_stdout(self, capsys):
