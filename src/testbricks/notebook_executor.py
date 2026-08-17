@@ -33,6 +33,70 @@ def transform_run_commands(source, file_path):
     return RUN_COMMAND_PATTERN.sub(replace, source)
 
 
+SH_START_PATTERN = re.compile(r"^(\s*)#\s*(?:MAGIC\s+)?%sh(?:\s+(.*))?\s*$")
+MAGIC_START_PATTERN = re.compile(r"^\s*#\s*MAGIC\s+%sh")
+MAGIC_BODY_PATTERN = re.compile(r"^\s*#\s*MAGIC\s+(.*)$")
+
+
+def _parse_sh_remainder(remainder):
+    fail_on_error = False
+    if remainder is None:
+        return fail_on_error, ""
+    tokens = remainder.split()
+    script_start = None
+    for index, token in enumerate(tokens):
+        if token.startswith("-"):
+            if token == "-e":
+                fail_on_error = True
+            else:
+                raise ValueError(f"Unknown %sh flag: {token}")
+        else:
+            script_start = index
+            break
+    if script_start is None:
+        return fail_on_error, ""
+    parts = remainder.split(maxsplit=script_start)
+    inline = parts[-1] if parts else ""
+    return fail_on_error, inline.strip()
+
+
+def transform_sh_commands(source):
+    lines = source.splitlines(keepends=True)
+    output = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        newline = "\n" if line.endswith("\n") else ""
+        match = SH_START_PATTERN.match(line.rstrip("\n"))
+        if not match:
+            output.append(line)
+            index += 1
+            continue
+        indent, remainder = match.group(1), match.group(2)
+        fail_on_error, inline = _parse_sh_remainder(remainder)
+        script_lines = []
+        if inline:
+            script_lines.append(inline)
+        started_with_magic = bool(MAGIC_START_PATTERN.match(line))
+        index += 1
+        if started_with_magic:
+            while index < len(lines):
+                body_match = MAGIC_BODY_PATTERN.match(lines[index].rstrip("\n"))
+                if not body_match:
+                    break
+                body = body_match.group(1)
+                if body.lstrip().startswith("%"):
+                    break
+                script_lines.append(body)
+                index += 1
+        script = "\n".join(script_lines)
+        if script.strip():
+            output.append(
+                f"{indent}__run_shell__({script!r}, fail_on_error={fail_on_error}){newline}"
+            )
+    return "".join(output)
+
+
 class NotebookExecutor:
     def __init__(self, dbutils_mock):
         self._dbutils = dbutils_mock
