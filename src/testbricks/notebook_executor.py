@@ -1,9 +1,11 @@
 import os
 import re
+import subprocess
+import sys
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from testbricks.notebook_exceptions import NotebookExit
+from testbricks.notebook_exceptions import NotebookExit, ShellCommandError
 
 RUN_COMMAND_PATTERN = re.compile(
     r"^\s*#\s*(?:MAGIC\s+)?%run\s+(.+?)\s*$",
@@ -95,6 +97,31 @@ def transform_sh_commands(source):
                 f"{indent}__run_shell__({script!r}, fail_on_error={fail_on_error}){newline}"
             )
     return "".join(output)
+
+
+def run_shell(script, fail_on_error=False):
+    try:
+        completed = subprocess.run(
+            ["bash", "-c", script],
+            cwd=os.getcwd(),
+            env=os.environ.copy(),
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise ShellCommandError("bash not found") from exc
+
+    if completed.stdout:
+        sys.stdout.write(completed.stdout)
+    if completed.stderr:
+        sys.stderr.write(completed.stderr)
+    if fail_on_error and completed.returncode != 0:
+        snippet = (completed.stderr or completed.stdout or "").strip()
+        snippet = snippet[-200:]
+        raise ShellCommandError(
+            f"Command failed with exit code {completed.returncode}: {snippet}",
+            returncode=completed.returncode,
+        )
 
 
 class NotebookExecutor:
