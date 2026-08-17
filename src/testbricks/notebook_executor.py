@@ -1,9 +1,11 @@
 import os
 import re
+import subprocess
+import sys
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from testbricks.notebook_exceptions import NotebookExit
+from testbricks.notebook_exceptions import NotebookExit, ShellCommandError
 
 RUN_COMMAND_PATTERN = re.compile(
     r"^\s*#\s*(?:MAGIC\s+)?%run\s+(.+?)\s*$",
@@ -31,6 +33,95 @@ def transform_run_commands(source, file_path):
         return f"__run_notebook__({relative_path!r})"
 
     return RUN_COMMAND_PATTERN.sub(replace, source)
+
+
+SH_START_PATTERN = re.compile(r"^(\s*)#\s*(?:MAGIC\s+)?%sh(?:\s+(.*))?\s*$")
+MAGIC_START_PATTERN = re.compile(r"^\s*#\s*MAGIC\s+%sh")
+MAGIC_BODY_PATTERN = re.compile(r"^\s*#\s*MAGIC\s+(.*)$")
+
+
+def _parse_sh_remainder(remainder):
+    fail_on_error = False
+    if remainder is None:
+        return fail_on_error, ""
+    tokens = remainder.split()
+    script_start = None
+    for index, token in enumerate(tokens):
+        if token.startswith("-"):
+            if token == "-e":
+                fail_on_error = True
+            else:
+                raise ValueError(f"Unknown %sh flag: {token}")
+        else:
+            script_start = index
+            break
+    if script_start is None:
+        return fail_on_error, ""
+    parts = remainder.split(maxsplit=script_start)
+    inline = parts[-1] if parts else ""
+    return fail_on_error, inline.strip()
+
+
+def transform_sh_commands(source):
+    lines = source.splitlines(keepends=True)
+    output = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        newline = "\n" if line.endswith("\n") else ""
+        match = SH_START_PATTERN.match(line.rstrip("\n"))
+        if not match:
+            output.append(line)
+            index += 1
+            continue
+        indent, remainder = match.group(1), match.group(2)
+        fail_on_error, inline = _parse_sh_remainder(remainder)
+        script_lines = []
+        if inline:
+            script_lines.append(inline)
+        started_with_magic = bool(MAGIC_START_PATTERN.match(line))
+        index += 1
+        if started_with_magic:
+            while index < len(lines):
+                body_match = MAGIC_BODY_PATTERN.match(lines[index].rstrip("\n"))
+                if not body_match:
+                    break
+                body = body_match.group(1)
+                if body.lstrip().startswith("%"):
+                    break
+                script_lines.append(body)
+                index += 1
+        script = "\n".join(script_lines)
+        if script.strip():
+            output.append(
+                f"{indent}__run_shell__({script!r}, fail_on_error={fail_on_error}){newline}"
+            )
+    return "".join(output)
+
+
+def run_shell(script, fail_on_error=False):
+    try:
+        completed = subprocess.run(
+            ["bash", "-c", script],
+            cwd=os.getcwd(),
+            env=os.environ.copy(),
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise ShellCommandError("bash not found") from exc
+
+    if completed.stdout:
+        sys.stdout.write(completed.stdout)
+    if completed.stderr:
+        sys.stderr.write(completed.stderr)
+    if fail_on_error and completed.returncode != 0:
+        snippet = (completed.stderr or completed.stdout or "").strip()
+        snippet = snippet[-200:]
+        raise ShellCommandError(
+            f"Command failed with exit code {completed.returncode}: {snippet}",
+            returncode=completed.returncode,
+        )
 
 
 class NotebookExecutor:
@@ -93,6 +184,7 @@ class NotebookExecutor:
 
     def _execute_source(self, source, file_path, global_namespace, local_namespace):
         transformed = transform_run_commands(source, file_path)
+        transformed = transform_sh_commands(transformed)
         exec(compile(transformed, file_path, "exec"), global_namespace, local_namespace)
 
     def exec_file(self, file_path, namespace, *, top_level=False):
@@ -100,6 +192,7 @@ class NotebookExecutor:
             with open(file_path, encoding="utf-8") as notebook_file:
                 source = notebook_file.read()
             namespace["__file__"] = file_path
+            namespace["__run_shell__"] = run_shell
             try:
                 self._execute_source(source, file_path, namespace, namespace)
             except NotebookExit as exc:
