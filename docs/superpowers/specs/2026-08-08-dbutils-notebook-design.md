@@ -8,7 +8,7 @@
 
 Implement `dbutils.notebook.run()` and `dbutils.notebook.exit()` so Databricks notebook orchestration patterns work locally. Extract a shared `NotebookExecutor` that powers both `%run` (shared namespace) and `dbutils.notebook.run()` (isolated namespace), replacing the execution logic currently embedded in `LocalWorkflowRunner`.
 
-This complements the existing `dbutils.fs`, `dbutils.widgets`, and `SparkMock` proxies.
+This complements the existing `dbutils.fs`, `dbutils.widgets`, and `SparkProxy` proxies.
 
 ## Requirements Summary
 
@@ -254,7 +254,7 @@ DAG building, task parsing, and `format_dag()` remain unchanged.
 
 - `transform_run_commands` and `parse_run_path` move to `notebook_executor.py`. Update `tests/test_local_workflow_runner.py` imports (or add re-exports in `local_workflow_runner.py` for backward compatibility).
 - `dbutils.notebook` changes from `NoOpModule` (returns `True`) to real implementation (returns `str` from `run()`, raises from `exit()`).
-- No changes to `SparkMock` or `dbutils.fs`.
+- No changes to `SparkProxy` or `dbutils.fs`.
 
 ## Out of Scope
 

@@ -24,15 +24,15 @@ Testbricks is my effort to decouple a typical Databricks Stack -
 pip install testbricks
 ```
 
-PySpark needs a JDK on `PATH` (Java 8+). Create a `SparkMock`, import `dbutils`, and run a Databricks workflow JSON with `LocalWorkflowRunner`:
+PySpark needs a JDK on `PATH` (Java 8+). Create a `SparkProxy`, import `dbutils`, and run a Databricks workflow JSON with `LocalWorkflowRunner`:
 
 ```python
-from testbricks import SparkMock, LocalWorkflowRunner
+from testbricks import SparkProxy, LocalWorkflowRunner
 from testbricks.dbutils import dbutils
 
 # CSV tables live under {base_path}/{schema}/{table}.csv
 # e.g. ./data/bronze/customers.csv  →  spark.read.table("bronze.customers")
-spark = SparkMock("./data")
+spark = SparkProxy("./data")
 
 # Optional: use dbutils in the driver process (notebooks get it automatically)
 dbutils.widgets.text("filter_country", "USA")
@@ -41,7 +41,7 @@ print(dbutils.widgets.get("filter_country"))
 runner = LocalWorkflowRunner(
     source_dir="./notebooks",          # local .py files named after the notebook
     workflow_json_path="./workflow.json",
-    base_path="./data",                # same catalog root as SparkMock
+    base_path="./data",                # same catalog root as SparkProxy
 )
 runner.run_workflow(extra_globals={"spark": spark})
 ```
@@ -83,6 +83,6 @@ df.write.mode("overwrite").saveAsTable("silver.customers_enriched")
 ```
 
 ## Key Modules
-1. `SparkMock` - A Spark proxy that manipulates incoming Delta table reads and writes and redirects them to interactions with CSV files stored locally
+1. `SparkProxy` - A Spark proxy that manipulates incoming Delta table reads and writes and redirects them to interactions with CSV files stored locally
 2. `LocalWorkflowRunner` - A notebook orchestrator that takes the notebook .py files as defined in a Databricks Workflow JSON file and executes them as per the DAG definition. Databricks comment magics `%run` and `%sh` (`# %sh` / `# MAGIC %sh`, including `%sh -e`) work in those notebooks.
 3. `dbutils` - A drop in replacement for Databricks `dbutils`. Supports `fs`, `widgets`, and `notebook` (`exit` / `%run`).

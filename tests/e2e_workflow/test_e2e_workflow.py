@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 import pytest
 
 from testbricks.local_workflow_runner import LocalWorkflowRunner
-from testbricks.spark_mock import SparkMock
+from testbricks.spark_proxy import SparkProxy
 
 
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -27,7 +27,7 @@ def e2e_env(tmp_path):
     # Set widget parameters as env vars BEFORE the workflow starts.
     for key, value in WIDGET_PARAMS.items():
         os.environ[key] = value
-    spark = SparkMock(str(data_dir))
+    spark = SparkProxy(str(data_dir))
     yield spark, str(data_dir)
     # Tear down env vars to prevent cross-test leakage.
     for key in WIDGET_PARAMS:

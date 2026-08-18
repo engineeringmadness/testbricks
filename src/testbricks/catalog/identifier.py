@@ -1,4 +1,4 @@
-"""Shared table identity helpers for CSV-backed SparkMock tables."""
+"""Shared table identity helpers for CSV-backed SparkProxy tables."""
 
 from __future__ import annotations
 
@@ -42,15 +42,12 @@ class TableIdentifier:
     @classmethod
     def parse(cls, table_name: str) -> TableIdentifier:
         parts = _split_qualified_name(table_name)
-        if len(parts) == 3:
+        if len(parts) == 3 and all(parts):
             catalog, schema, table = parts
-            if catalog and schema and table:
-                return cls(schema=schema, table=table, catalog=catalog)
-        elif len(parts) == 2:
+            return cls(schema=schema, table=table, catalog=catalog)
+        if len(parts) == 2 and all(parts):
             schema, table = parts
-            if schema and table:
-                return cls(schema=schema, table=table)
-
+            return cls(schema=schema, table=table)
         raise InvalidTableNameError(
             "Invalid table name format. Expected 'schema_name.table_name' "
             f"or 'catalog.schema_name.table_name', got '{table_name}'"

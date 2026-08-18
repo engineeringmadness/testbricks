@@ -8,7 +8,7 @@
 
 Enhance the local `dbutils` proxy so notebook code using Databricks widgets can run in CI and local workflows. Widget values are stored in process environment variables (keyed by widget name) so they are accessible throughout program execution via both `dbutils.widgets.get()` and `os.environ` / `os.getenv()`.
 
-This complements the existing `dbutils.fs` mock and the `SparkMock` proxy.
+This complements the existing `dbutils.fs` mock and the `SparkProxy` proxy.
 
 ## Requirements Summary
 

@@ -27,19 +27,20 @@ class WidgetsMock:
         if overrides is None or name not in overrides:
             os.environ[name] = str(value)
 
-    def text(self, name, default, label=None):
-        self._set_widget_value(name, default)
+    def _register(self, name, value):
+        self._set_widget_value(name, value)
         self._registry.add(name)
         return None
+
+    def text(self, name, default, label=None):
+        return self._register(name, default)
 
     def dropdown(self, name, default, choices, label=None):
         if default not in choices:
             raise DbutilsError(
                 f"Default value '{default}' is not in choices {list(choices)}"
             )
-        self._set_widget_value(name, default)
-        self._registry.add(name)
-        return None
+        return self._register(name, default)
 
     def get(self, name):
         if name not in self._registry:
@@ -47,10 +48,9 @@ class WidgetsMock:
         return os.environ[name]
 
     def remove(self, name):
-        if name not in self._registry:
-            return None
-        os.environ.pop(name, None)
-        self._registry.discard(name)
+        if name in self._registry:
+            os.environ.pop(name, None)
+            self._registry.discard(name)
         return None
 
     def removeAll(self):
