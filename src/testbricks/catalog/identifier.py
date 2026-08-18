@@ -1,4 +1,4 @@
-"""Shared table identity helpers for CSV-backed SparkMock tables."""
+"""Shared table identity helpers for CSV-backed SparkProxy tables."""
 
 from __future__ import annotations
 

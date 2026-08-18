@@ -1,8 +1,8 @@
-# E2E Workflow Test Design (SparkMock + LocalWorkflowRunner + dbutils)
+# E2E Workflow Test Design (SparkProxy + LocalWorkflowRunner + dbutils)
 
 **Date:** 2026-08-09  
 **Status:** Draft for review  
-**Scope:** Standalone end-to-end test combining `SparkMock`, `LocalWorkflowRunner`, and `dbutils`; plus a backward-compatible enhancement to `run_workflow()` so the three components can integrate.
+**Scope:** Standalone end-to-end test combining `SparkProxy`, `LocalWorkflowRunner`, and `dbutils`; plus a backward-compatible enhancement to `run_workflow()` so the three components can integrate.
 
 ## Goal
 
@@ -23,7 +23,7 @@ Create a standalone E2E test that runs a realistic Databricks-style pipeline thr
 
 ## Motivation / Integration Gaps
 
-Two gaps prevent `SparkMock` + `LocalWorkflowRunner` + `dbutils` from working together end-to-end today:
+Two gaps prevent `SparkProxy` + `LocalWorkflowRunner` + `dbutils` from working together end-to-end today:
 
 1. **No `spark` injection** — `run_workflow()` builds `execution_globals` internally with only `dbutils` and `__run_notebook__`. Notebooks have no `spark` object on which to call `.read.table()` / `.sql()` / `.write.saveAsTable()`.
 2. **`base_parameters` ignored + widget defaults clobber env vars** — `dbutils.widgets.text(name, default)` unconditionally overwrites `os.environ[name]` with the default. Only `argument_override_context` (used today solely by `run_isolated`) prevents this, and `run_workflow()` neither reads `base_parameters` from the workflow JSON nor activates that context.
@@ -33,7 +33,7 @@ Two gaps prevent `SparkMock` + `LocalWorkflowRunner` + `dbutils` from working to
 | Approach | Trade-off |
 |---|---|
 | **A. Enhance `run_workflow()`** *(chosen)* | Add `extra_globals` param for `spark` injection; read `base_parameters` from the workflow JSON, seed env vars via `setdefault` (test-set values win), and wrap each notebook in `argument_override_context`. Most faithful to Databricks semantics; small backward-compatible change; cleanest integration. |
-| B. Test-only workarounds | Each notebook constructs its own `SparkMock` from an env var; pre-register widget names. Self-contained but `spark` isn't runner-managed and the pattern diverges from real Databricks usage. |
+| B. Test-only workarounds | Each notebook constructs its own `SparkProxy` from an env var; pre-register widget names. Self-contained but `spark` isn't runner-managed and the pattern diverges from real Databricks usage. |
 | C. Hybrid | Inject `spark` via a small change; handle widgets entirely on the test side. Less faithful — `base_parameters` (a real workflow concept) goes unused. |
 
 **Decision: Approach A.** It makes the framework correctly honor `base_parameters` and `spark` injection — capabilities the project needs for any real notebook workflow — while staying backward-compatible.
@@ -197,7 +197,7 @@ result.write.mode("overwrite").saveAsTable("gold.customer_order_summary")
 ### Design rationale for NB3
 
 - **Why `spark.sql()`:** `DataFrameWrapper.__getattr__` wraps `DataFrame` returns but not `GroupedData`. `df.groupBy(...)` returns a raw `GroupedData`; `.agg(...)` returns a raw `DataFrame` whose `.write` is Spark's native writer (not the mock `DataFrameWriter`), so `saveAsTable` would bypass the CSV-backed mock. `spark.sql()` sidesteps this entirely.
-- **Why `USING(customer_id)` + unqualified columns:** `SparkMock.sql()` does a blanket `query.replace('.', '_')`. A dotted reference like `c.customer_id` would be mangled to `c_customer_id` and break the query. Using `USING(customer_id)` makes the join column unambiguous, so all column references can be unqualified (dot-free) and survive the replacement intact.
+- **Why `USING(customer_id)` + unqualified columns:** `SparkProxy.sql()` does a blanket `query.replace('.', '_')`. A dotted reference like `c.customer_id` would be mangled to `c_customer_id` and break the query. Using `USING(customer_id)` makes the join column unambiguous, so all column references can be unqualified (dot-free) and survive the replacement intact.
 - **Core command coverage:** the pipeline exercises all three commands from AGENTS.md — `spark.read.table` (NB1/NB2), `df.write.saveAsTable` (all three), and `spark.sql` (NB3).
 
 ## Test File — `test_e2e_workflow.py`
@@ -213,7 +213,7 @@ def e2e_env(tmp_path):
     # Set widget parameters as env vars BEFORE the workflow starts.
     for key, value in WIDGET_PARAMS.items():
         os.environ[key] = value
-    spark = SparkMock(str(data_dir))
+    spark = SparkProxy(str(data_dir))
     yield spark, str(data_dir)
     # Tear down env vars to prevent cross-test leakage.
     for key in WIDGET_PARAMS:

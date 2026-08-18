@@ -8,13 +8,13 @@
 
 Build a local proxy for Databricks `dbutils` so notebook code can run in CI without a Databricks cluster. The first slice implements four `dbutils.fs` file operations; all other `dbutils` methods and `dbutils.fs` methods are no-ops that return `True`.
 
-This complements the existing `SparkMock`, which already proxies `spark.read.table`, `spark.write.table`, and `spark.sql` against local CSV files.
+This complements the existing `SparkProxy`, which already proxies `spark.read.table`, `spark.write.table`, and `spark.sql` against local CSV files.
 
 ## Requirements Summary
 
 | Decision | Choice |
 |---|---|
-| Path mapping | Share `base_path` with `SparkMock`; strip `dbfs:`, `/dbfs/`, `/mnt/` prefixes |
+| Path mapping | Share `base_path` with `SparkProxy`; strip `dbfs:`, `/dbfs/`, `/mnt/` prefixes |
 | Access pattern | Global `dbutils` import; `LocalWorkflowRunner` auto-injects into notebook namespace |
 | Unimplemented methods | No-op returning `True` |
 | Configuration | Explicit `configure(base_path)`; runner calls it at workflow start |

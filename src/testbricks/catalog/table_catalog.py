@@ -1,4 +1,4 @@
-"""CSV + temp-view registry for SparkMock tables."""
+"""CSV + temp-view registry for SparkProxy tables."""
 
 from __future__ import annotations
 

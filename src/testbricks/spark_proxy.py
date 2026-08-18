@@ -4,10 +4,10 @@ from .catalog import CatalogFacade, TableCatalog, is_maintenance_noop, rewrite_f
 from .data_frame_wrapper import DataFrameReader, DataFrameWrapper
 
 
-class SparkMock:
+class SparkProxy:
     def __init__(self, base_path):
         self._base_path = base_path
-        self._spark_session = SparkSession.builder.appName("SparkMock").getOrCreate()
+        self._spark_session = SparkSession.builder.appName("SparkProxy").getOrCreate()
         self._catalog = TableCatalog(self._spark_session, base_path)
         self._spark_catalog = CatalogFacade(self._catalog)
         self._read = None

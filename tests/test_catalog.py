@@ -11,7 +11,7 @@ from testbricks.catalog import (
     TableCatalog,
     TableIdentifier,
 )
-from testbricks.spark_mock import SparkMock
+from testbricks.spark_proxy import SparkProxy
 
 
 class TestTableIdentifier:
@@ -60,8 +60,8 @@ class TestTableCatalog:
         schema.mkdir(parents=True)
         (schema / "drivers.csv").write_text("Name,Age\nAlice,30\nBob,25\n")
 
-        spark_mock = SparkMock(str(base))
-        result = spark_mock.sql("SELECT * FROM f1_data_drivers")
+        spark_proxy = SparkProxy(str(base))
+        result = spark_proxy.sql("SELECT * FROM f1_data_drivers")
         assert result.count() == 2
 
     def test_path_for_and_exists(self, catalog):
@@ -147,28 +147,28 @@ class TestSqlRewrite:
 class TestCatalogFacade:
     def test_table_exists_list_tables_and_databases(self, tmp_path):
         base = tmp_path / "data"
-        spark_mock = SparkMock(str(base))
-        df = spark_mock.createDataFrame([("Alice", 30)], ["Name", "Age"])
+        spark_proxy = SparkProxy(str(base))
+        df = spark_proxy.createDataFrame([("Alice", 30)], ["Name", "Age"])
         df.write.mode("overwrite").saveAsTable("default.people")
 
-        assert spark_mock.catalog.tableExists("default.people")
-        assert spark_mock.catalog.tableExists("main.default.people")
-        assert spark_mock.catalog.tableExists("people", "default")
-        assert not spark_mock.catalog.tableExists("default.missing")
-        assert not spark_mock.catalog.tableExists("people")
+        assert spark_proxy.catalog.tableExists("default.people")
+        assert spark_proxy.catalog.tableExists("main.default.people")
+        assert spark_proxy.catalog.tableExists("people", "default")
+        assert not spark_proxy.catalog.tableExists("default.missing")
+        assert not spark_proxy.catalog.tableExists("people")
 
-        tables = spark_mock.catalog.listTables("default")
+        tables = spark_proxy.catalog.listTables("default")
         assert [table.name for table in tables] == ["people"]
         assert tables[0].namespace == ["default"]
 
-        databases = spark_mock.catalog.listDatabases()
+        databases = spark_proxy.catalog.listDatabases()
         assert "default" in [database.name for database in databases]
 
-        filtered = spark_mock.catalog.listTables(pattern="peo*")
+        filtered = spark_proxy.catalog.listTables(pattern="peo*")
         assert [table.name for table in filtered] == ["people"]
-        assert [db.name for db in spark_mock.catalog.listDatabases(pattern="def*")] == [
+        assert [db.name for db in spark_proxy.catalog.listDatabases(pattern="def*")] == [
             "default"
         ]
         ident = TableIdentifier.parse("default.people")
-        assert spark_mock.catalog.exists(ident)
+        assert spark_proxy.catalog.exists(ident)
 

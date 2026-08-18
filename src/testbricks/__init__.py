@@ -1,11 +1,11 @@
 from .dbutils import DbutilsError, configure, dbutils
 from .local_workflow_runner import LocalWorkflowRunner
-from .spark_mock import SparkMock
+from .spark_proxy import SparkProxy
 
 __all__ = [
     "DbutilsError",
     "LocalWorkflowRunner",
-    "SparkMock",
+    "SparkProxy",
     "configure",
     "dbutils",
 ]

@@ -1,4 +1,4 @@
-"""Rewrite Databricks-style ``schema.table`` refs in SQL to SparkMock temp views."""
+"""Rewrite Databricks-style ``schema.table`` refs in SQL to SparkProxy temp views."""
 
 from __future__ import annotations
 

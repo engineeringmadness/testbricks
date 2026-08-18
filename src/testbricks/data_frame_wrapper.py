@@ -25,9 +25,9 @@ class _IoBuilder:
 
 
 class DataFrameReader(_IoBuilder):
-    def __init__(self, spark_mock):
+    def __init__(self, spark_proxy):
         super().__init__()
-        self._spark = spark_mock
+        self._spark = spark_proxy
 
     def table(self, table_name):
         ident = TableIdentifier.parse(table_name)
@@ -37,9 +37,9 @@ class DataFrameReader(_IoBuilder):
 
 
 class DataFrameWriter(_IoBuilder):
-    def __init__(self, spark_mock, dataframe):
+    def __init__(self, spark_proxy, dataframe):
         super().__init__()
-        self._spark = spark_mock
+        self._spark = spark_proxy
         self._dataframe = dataframe
         self._mode = None
         self._partition_by = ()
@@ -71,28 +71,28 @@ class DataFrameWriter(_IoBuilder):
         )
 
 
-def _wrap_spark_result(spark_mock, result):
+def _wrap_spark_result(spark_proxy, result):
     if isinstance(result, DataFrame):
-        return DataFrameWrapper(spark_mock, result)
+        return DataFrameWrapper(spark_proxy, result)
     if isinstance(result, GroupedData):
-        return GroupedDataWrapper(spark_mock, result)
+        return GroupedDataWrapper(spark_proxy, result)
     return result
 
 
-def _proxy_callable(spark_mock, target, name):
+def _proxy_callable(spark_proxy, target, name):
     attr = getattr(target, name)
     if not callable(attr):
         return attr
 
     def wrapper(*args, **kwargs):
-        return _wrap_spark_result(spark_mock, attr(*args, **kwargs))
+        return _wrap_spark_result(spark_proxy, attr(*args, **kwargs))
 
     return wrapper
 
 
 class GroupedDataWrapper:
-    def __init__(self, spark_mock, grouped):
-        self._spark = spark_mock
+    def __init__(self, spark_proxy, grouped):
+        self._spark = spark_proxy
         self._grouped = grouped
 
     def __getattr__(self, name):
@@ -100,8 +100,8 @@ class GroupedDataWrapper:
 
 
 class DataFrameWrapper:
-    def __init__(self, spark_mock, dataframe):
-        self._spark = spark_mock
+    def __init__(self, spark_proxy, dataframe):
+        self._spark = spark_proxy
         self._dataframe = dataframe
         self._write = None
 

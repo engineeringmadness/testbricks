@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import pytest
 import shutil
 
-from testbricks.spark_mock import SparkMock
+from testbricks.spark_proxy import SparkProxy
 
 
 TEST_DIR = "tests/data"
@@ -15,8 +15,8 @@ TEST_DIR = "tests/data"
 
 @pytest.fixture(scope="session")
 def spark_session():
-    """Single SparkMock instance shared across the test session."""
-    return SparkMock(TEST_DIR)
+    """Single SparkProxy instance shared across the test session."""
+    return SparkProxy(TEST_DIR)
 
 
 @pytest.fixture
@@ -27,17 +27,17 @@ def spark(spark_session):
 
 @pytest.fixture
 def temp_spark(tmp_path):
-    """Provide a SparkMock pointing at an isolated temp directory."""
+    """Provide a SparkProxy pointing at an isolated temp directory."""
     base = tmp_path / "spark_data"
     base.mkdir()
-    yield SparkMock(str(base))
+    yield SparkProxy(str(base))
 
 
-def _make_df(spark_mock, rows, columns):
+def _make_df(spark_proxy, rows, columns):
     """Create a DataFrameWrapper from local data without using parallelize."""
     from testbricks.data_frame_wrapper import DataFrameWrapper
-    spark_df = spark_mock._spark_session.createDataFrame(rows, schema=columns)
-    return DataFrameWrapper(spark_mock, spark_df)
+    spark_df = spark_proxy._spark_session.createDataFrame(rows, schema=columns)
+    return DataFrameWrapper(spark_proxy, spark_df)
 
 
 class TestReadTable:
@@ -275,7 +275,7 @@ class TestDataFrameWriter:
         assert writer._options == {"header": "true"}
 
 
-class TestSparkMockLifecycle:
+class TestSparkProxyLifecycle:
     def test_base_path_unchanged(self, spark):
         assert spark._base_path == TEST_DIR
 

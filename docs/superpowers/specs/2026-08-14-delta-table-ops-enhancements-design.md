@@ -14,7 +14,7 @@ Tables are CSV files at `{base_path}/{schema}/{table}.csv` plus Spark temp views
 | `spark.read.table("schema.table")` | Reads CSV via `TableCatalog.read_csv`; options pass through; no default `header`/`inferSchema` (unlike `load_all`) |
 | `df.write.mode(...).saveAsTable("schema.table")` | `overwrite` (default) or `append`; schema-name mismatch on append raises `SchemaMismatchError` |
 | `spark.sql(...)` | Replaces **every** `.` with `_`, then runs against temp views |
-| `spark.write.table(...)` | Does not exist (`SparkMock` has no `write`) |
+| `spark.write.table(...)` | Does not exist (`SparkProxy` has no `write`) |
 | `df.write.format("delta")` | Does not exist (AttributeError on real notebooks) |
 | `df.groupBy(...).agg(...).write.saveAsTable(...)` | Bypasses mock writer: `GroupedData` is not wrapped, so `.write` is native Spark |
 
@@ -29,7 +29,7 @@ Tables are CSV files at `{base_path}/{schema}/{table}.csv` plus Spark temp views
 
 ## Idea catalog (incremental, small surface)
 
-Ideas are grouped by payoff. Each item is implementable as a localized change on existing types (`DataFrameWriter`, `DataFrameReader`, `SparkMock.sql`, `TableCatalog`, `DataFrameWrapper`).
+Ideas are grouped by payoff. Each item is implementable as a localized change on existing types (`DataFrameWriter`, `DataFrameReader`, `SparkProxy.sql`, `TableCatalog`, `DataFrameWrapper`).
 
 ### A. Writer/reader compatibility shims (highest “notebooks stop crashing” value)
 
@@ -66,11 +66,11 @@ These match Databricks call chains that currently fail before any data is writte
 9. **`spark.table("schema.table")`**  
    Alias of `spark.read.table(...)`. Common in notebooks.
 
-10. **Forward `createDataFrame` / `range` / `sparkContext` from `SparkMock`**  
+10. **Forward `createDataFrame` / `range` / `sparkContext` from `SparkProxy`**  
     Wrap returned `DataFrame`s in `DataFrameWrapper` so `.write.saveAsTable` stays on the mock. Today tests use `_spark_session.createDataFrame` internally; notebooks call `spark.createDataFrame`.
 
 11. **`spark.catalog.tableExists` / `listTables` / `listDatabases`**  
-    Thin wrappers over `TableCatalog.exists` and directory listing. Databricks jobs often gate writes with `tableExists`. Do not proxy the full PySpark `Catalog` object unless needed; a small `SparkMock.catalog` façade (today it returns `TableCatalog`, which is **not** PySpark `Catalog`) is a compatibility trap — either rename the internal catalog or add `spark._table_catalog` and expose Spark-like methods on a wrapper. **Prefer:** keep `TableCatalog` internal-ish and add `tableExists` on `SparkMock` or a thin `CatalogFacade` without renaming everything in one go.
+    Thin wrappers over `TableCatalog.exists` and directory listing. Databricks jobs often gate writes with `tableExists`. Do not proxy the full PySpark `Catalog` object unless needed; a small `SparkProxy.catalog` façade (today it returns `TableCatalog`, which is **not** PySpark `Catalog`) is a compatibility trap — either rename the internal catalog or add `spark._table_catalog` and expose Spark-like methods on a wrapper. **Prefer:** keep `TableCatalog` internal-ish and add `tableExists` on `SparkProxy` or a thin `CatalogFacade` without renaming everything in one go.
 
 ### D. SQL DDL / insert-only DML (still not MERGE/UPDATE/DELETE)
 
@@ -114,7 +114,7 @@ These persist through existing `save_dataframe` / filesystem deletes.
     Match `load_all`. Today `read.table` without options depends on Spark CSV defaults; `load_all` always infers. Aligning removes a class of “SQL sees types, DataFrame reader sees strings” bugs.
 
 23. **Missing-table errors**  
-    Map missing CSV to a message that includes `schema.table` (AnalysisException-like `ValueError` or existing `SparkMockError` subclass). Tests currently accept generic `Exception`.
+    Map missing CSV to a message that includes `schema.table` (AnalysisException-like `ValueError` or existing `SparkProxyError` subclass). Tests currently accept generic `Exception`.
 
 24. **Quoted / mixed-case identifiers**  
     Strip backticks in `TableIdentifier.parse`; keep case as on disk (CSV names are case-sensitive on Linux).
@@ -152,7 +152,7 @@ Approach 1, then **D12, D14, D16–D18, D19** (`CTAS`, `DROP TABLE`, `INSERT INT
 
 Approach 1 or 2, plus **C11 + B8** (Spark-like `catalog.tableExists` / `listTables`, optional `catalog.schema.table`).
 
-**Trade-off:** Better Unity Catalog *naming* without UC features. Easy to over-build if `SparkMock.catalog` currently *is* `TableCatalog` — a façade rename can sprawl. Do this only if notebooks call `spark.catalog.*`.
+**Trade-off:** Better Unity Catalog *naming* without UC features. Easy to over-build if `SparkProxy.catalog` currently *is* `TableCatalog` — a façade rename can sprawl. Do this only if notebooks call `spark.catalog.*`.
 
 ## Recommendation
 
@@ -168,7 +168,7 @@ Do **not** start Approach 3 until `spark.catalog.tableExists` (or three-part nam
 
 ```
 src/testbricks/
-  spark_mock.py           # sql() identifier rewrite; table(); __getattr__ wrap DataFrames
+  spark_proxy.py           # sql() identifier rewrite; table(); __getattr__ wrap DataFrames
   data_frame_reader.py    # format(); default header/inferSchema
   data_frame_writer.py    # format(); partitionBy()
   data_frame_wrapper.py   # wrap GroupedData so .agg() returns DataFrameWrapper
@@ -202,11 +202,11 @@ If `getattr` result is callable and the inner result is `DataFrame`, wrap as tod
 
 ### `spark.table`
 
-`SparkMock.table(name)` → `self.read.table(name)`.
+`SparkProxy.table(name)` → `self.read.table(name)`.
 
 ### `createDataFrame`
 
-`SparkMock.createDataFrame(*args, **kwargs)` → wrap `self._spark_session.createDataFrame(...)`.
+`SparkProxy.createDataFrame(*args, **kwargs)` → wrap `self._spark_session.createDataFrame(...)`.
 
 ### Error handling
 
@@ -243,4 +243,4 @@ Detect statement kind with a normalized prefix (`CREATE OR REPLACE TABLE`, `INSE
 
 ## Open choice (does not block Approach 1)
 
-Whether `SparkMock.catalog` should remain `TableCatalog` or become a Spark-like façade is deferred to Approach 3 so this wave does not rename a public attribute.
+Whether `SparkProxy.catalog` should remain `TableCatalog` or become a Spark-like façade is deferred to Approach 3 so this wave does not rename a public attribute.

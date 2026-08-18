@@ -1,9 +1,9 @@
-# SparkMock Catalog Refactor + `saveAsTable` Append Mode
+# SparkProxy Catalog Refactor + `saveAsTable` Append Mode
 
 **Date:** 2026-08-11  
 **Status:** Implemented  
 **Scope:**
-1. Shared CSV/temp-view **catalog** for SparkMock table I/O
+1. Shared CSV/temp-view **catalog** for SparkProxy table I/O
 2. `DataFrameWriter.saveAsTable()` honors `mode("append")`
 
 **Out of scope:**
@@ -21,7 +21,7 @@
 
 ```
 src/mock/
-  spark_mock.py              # façade; owns TableCatalog
+  spark_proxy.py              # façade; owns TableCatalog
   data_frame_reader.py       # read.table → catalog.read_csv
   data_frame_writer.py       # saveAsTable → catalog.save_dataframe
   data_frame_wrapper.py
@@ -29,7 +29,7 @@ src/mock/
     __init__.py
     identifier.py            # TableIdentifier.parse("schema.table")
     table_catalog.py         # load_all / read_csv / save_dataframe
-    errors.py                # SparkMockError, InvalidTableNameError, SchemaMismatchError
+    errors.py                # SparkProxyError, InvalidTableNameError, SchemaMismatchError
 ```
 
 ### Responsibilities
@@ -38,13 +38,13 @@ src/mock/
 |---|---|
 | `TableIdentifier` | Parse two-part names; expose `view_name`, `relative_csv_path` |
 | `TableCatalog` | Resolve paths; discover CSVs at startup; read/write CSV; refresh temp views |
-| `SparkMock` | Build session + catalog; expose `read` / `sql` / `catalog` |
+| `SparkProxy` | Build session + catalog; expose `read` / `sql` / `catalog` |
 | `DataFrameReader` / `DataFrameWriter` | Thin Spark-shaped API over the catalog |
 
 ### Data flow
 
 ```
-Startup:  SparkMock(base) → TableCatalog.load_all() → temp views
+Startup:  SparkProxy(base) → TableCatalog.load_all() → temp views
 Read:     spark.read.table("s.t") → TableIdentifier → catalog.read_csv
 Write:    df.write.mode(...).saveAsTable("s.t") → catalog.save_dataframe
           → atomic CSV write + createOrReplaceTempView
