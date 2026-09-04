@@ -106,6 +106,29 @@ Schema flags:
 
 `partitionBy` columns must exist on the DataFrame. `option("replaceWhere", "<predicate>")` with `mode("overwrite")` deletes matching stored rows then appends the new frame. `bucketBy` / `sortBy` are accepted no-ops (bucketing is not simulated). `df.writeTo(table).using(...).create()` / `.replace()` / `.append()` maps onto the same table writer; `createOrReplace` and `overwritePartitions` raise `NotImplementedError` with a `saveAsTable` hint.
 
+## Repair-and-rerun
+
+`LocalWorkflowRunner.run_workflow` can re-run a subgraph without executing the full DAG:
+
+```python
+runner.run_workflow(extra_globals={"spark": spark}, only=["build_summary"])
+runner.run_workflow(extra_globals={"spark": spark}, from_task="enrich_customers")
+```
+
+- `only=["task_a", ...]` runs those task keys in topological order.
+- `from_task="task_a"` runs that task and every downstream dependent.
+- Tasks not selected are treated as already `SUCCESS` so `run_if` / `depends_on` still resolve.
+
+Overwrite table writes (`mode("overwrite")` / default) are naturally idempotent on re-run. `append` writes are not: a repair will insert another copy of the rows. For append tables, use a repair policy in the notebook (skip if the target already has the batch, dedupe on a key, or pass a flag that switches the write to overwrite for that run).
+
+Lakeflow JSON extras the runner understands:
+
+- `dbutils.jobs.taskValues.set` / `.get` across tasks (shared immediately; isolated `notebook.run` commits on return)
+- `run_if` and `depends_on[].outcome` (`ALL_SUCCESS`, `ALL_FAILED`, `AT_LEAST_ONE_SUCCESS`, `ALL_DONE`, `NONE_FAILED`, `AT_LEAST_ONE_FAILED`); ineligible tasks are `SKIPPED`
+- `condition_task` (`EQUAL` / `EQUAL_TO`, `NOT_EQUAL`, `GREATER_THAN`, …) with `{{tasks.<key>.values.<name>}}` operands
+- `for_each_task` sequential expansion of `inputs` with `{{input}}` parameters
+- `max_retries` / `min_retry_interval_millis` (retry notebook and for_each tasks); `timeout_seconds` is accepted and logged, not enforced
+
 ## Key Modules
 1. `SparkProxy` - A Spark proxy that manipulates incoming Delta table reads and writes and redirects them to interactions with CSV files stored locally
 2. `LocalWorkflowRunner` - A notebook orchestrator that takes the notebook .py files as defined in a Databricks Workflow JSON file and executes them as per the DAG definition. Databricks comment magics `%run`, `%sh` (`# %sh` / `# MAGIC %sh`, including `%sh -e`), and `%fs` (`# %fs` / `# MAGIC %fs`) work in those notebooks.

@@ -19,26 +19,26 @@ class TestSampleWorkflowDAG:
     def test_builds_dag_using_notebook_names(self):
         runner = LocalWorkflowRunner("src", WORKFLOW_SAMPLE_PATH, DEFAULT_BASE_PATH)
 
-        assert runner.dag["auxillary_dims"] == {"data_quality"}
-        assert runner.dag["reviews_fact"] == {"data_quality"}
-        assert runner.dag["data_quality"] == {"semantic_layer"}
+        assert runner.dag["dimensions"] == {"quality_checks"}
+        assert runner.dag["reviews_fact"] == {"quality_checks"}
+        assert runner.dag["quality_checks"] == {"semantic_layer"}
         assert runner.dag["semantic_layer"] == set()
 
     def test_execution_order_respects_dependencies(self):
         runner = LocalWorkflowRunner("src", WORKFLOW_SAMPLE_PATH, DEFAULT_BASE_PATH)
         order = runner.execution_order
 
-        assert order.index("data_quality") > order.index("auxillary_dims")
-        assert order.index("data_quality") > order.index("reviews_fact")
-        assert order.index("semantic_layer") > order.index("data_quality")
+        assert order.index("quality_checks") > order.index("dimensions")
+        assert order.index("quality_checks") > order.index("reviews_fact")
+        assert order.index("semantic_layer") > order.index("quality_checks")
 
     def test_format_dag_includes_nodes_and_execution_order(self):
         runner = LocalWorkflowRunner("src", WORKFLOW_SAMPLE_PATH, DEFAULT_BASE_PATH)
         formatted = runner.format_dag()
 
-        assert "- auxillary_dims -> [data_quality]" in formatted
-        assert "- reviews_fact -> [data_quality]" in formatted
-        assert "- data_quality -> [semantic_layer]" in formatted
+        assert "- dimensions -> [quality_checks]" in formatted
+        assert "- reviews_fact -> [quality_checks]" in formatted
+        assert "- quality_checks -> [semantic_layer]" in formatted
         assert "- semantic_layer -> []" in formatted
         assert "Execution order:" in formatted
         assert " -> ".join(runner.execution_order) in formatted
@@ -68,7 +68,7 @@ class TestNotebookNameExtraction:
 
         runner = LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
         assert runner._task_to_notebook["task_1"] == expected
-        assert runner.execution_order == [expected]
+        assert runner.execution_order == ["task_1"]
 
 
 class TestWorkflowExecution:
@@ -194,6 +194,822 @@ class TestWorkflowExecution:
             os.environ.pop("mode", None)
 
         assert marker.read_text(encoding="utf-8") == "from_test"
+
+
+class TestTaskValuesPropagation:
+    def test_downstream_task_reads_upstream_task_value(self, tmp_path):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        marker = tmp_path / "value.txt"
+        (source_dir / "producer.py").write_text(
+            'dbutils.jobs.taskValues.set(key="region", value="eu")\n',
+            encoding="utf-8",
+        )
+        (source_dir / "consumer.py").write_text(
+            'value = dbutils.jobs.taskValues.get(taskKey="producer", key="region")\n'
+            f'with open(r"{marker}", "w") as f: f.write(value)\n',
+            encoding="utf-8",
+        )
+        workflow = {
+            "tasks": [
+                {
+                    "task_key": "producer",
+                    "notebook_task": {"notebook_path": "/Workspace/any/producer"},
+                },
+                {
+                    "task_key": "consumer",
+                    "depends_on": [{"task_key": "producer"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/consumer"},
+                },
+            ]
+        }
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+
+        runner = LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+        runner.run_workflow()
+
+        assert marker.read_text(encoding="utf-8") == "eu"
+
+    def test_base_parameters_seed_task_values(self, tmp_path):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        marker = tmp_path / "seeded_tv.txt"
+        (source_dir / "main.py").write_text(
+            'value = dbutils.jobs.taskValues.get(taskKey="task_1", key="mode")\n'
+            f'with open(r"{marker}", "w") as f: f.write(value)\n',
+            encoding="utf-8",
+        )
+        workflow = {
+            "tasks": [
+                {
+                    "task_key": "task_1",
+                    "notebook_task": {
+                        "notebook_path": "/Workspace/any/main",
+                        "base_parameters": {"mode": "default"},
+                    },
+                }
+            ]
+        }
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+
+        runner = LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+        runner.run_workflow()
+
+        assert marker.read_text(encoding="utf-8") == "default"
+
+    def test_shared_namespace_sees_set_immediately_in_later_task(self, tmp_path):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        marker = tmp_path / "shared.txt"
+        (source_dir / "first.py").write_text(
+            'dbutils.jobs.taskValues.set(key="flag", value="on")\n',
+            encoding="utf-8",
+        )
+        (source_dir / "second.py").write_text(
+            'value = dbutils.jobs.taskValues.get(taskKey="first_task", key="flag")\n'
+            f'with open(r"{marker}", "w") as f: f.write(value)\n',
+            encoding="utf-8",
+        )
+        workflow = {
+            "tasks": [
+                {
+                    "task_key": "first_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/first"},
+                },
+                {
+                    "task_key": "second_task",
+                    "depends_on": [{"task_key": "first_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/second"},
+                },
+            ]
+        }
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+
+        runner = LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+        runner.run_workflow()
+
+        assert marker.read_text(encoding="utf-8") == "on"
+
+
+def _write_notebooks(source_dir, mapping):
+    for name, body in mapping.items():
+        (source_dir / f"{name}.py").write_text(body, encoding="utf-8")
+
+
+class TestRunIfConditions:
+    def _runner(self, tmp_path, tasks, notebooks):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        _write_notebooks(source_dir, notebooks)
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
+        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+
+    def test_all_success_skips_when_dependency_fails(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "fail_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/fail"},
+                },
+                {
+                    "task_key": "downstream",
+                    "run_if": "ALL_SUCCESS",
+                    "depends_on": [{"task_key": "fail_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/down"},
+                },
+            ],
+            {
+                "fail": "raise RuntimeError('boom')\n",
+                "down": f'with open(r"{log_file}", "a") as f: f.write("down\\n")\n',
+            },
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            runner.run_workflow()
+        assert runner.task_statuses["fail_task"] == "FAILED"
+        assert runner.task_statuses["downstream"] == "SKIPPED"
+        assert not log_file.exists()
+
+    def test_all_failed_runs_when_dependency_fails(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "fail_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/fail"},
+                },
+                {
+                    "task_key": "cleanup",
+                    "run_if": "ALL_FAILED",
+                    "depends_on": [{"task_key": "fail_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/cleanup"},
+                },
+            ],
+            {
+                "fail": "raise RuntimeError('boom')\n",
+                "cleanup": f'with open(r"{log_file}", "a") as f: f.write("cleanup\\n")\n',
+            },
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            runner.run_workflow()
+        assert runner.task_statuses["fail_task"] == "FAILED"
+        assert runner.task_statuses["cleanup"] == "SUCCESS"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["cleanup"]
+
+    def test_all_failed_skips_when_dependency_succeeds(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "ok_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/ok"},
+                },
+                {
+                    "task_key": "cleanup",
+                    "run_if": "ALL_FAILED",
+                    "depends_on": [{"task_key": "ok_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/cleanup"},
+                },
+            ],
+            {
+                "ok": "pass\n",
+                "cleanup": f'with open(r"{log_file}", "a") as f: f.write("cleanup\\n")\n',
+            },
+        )
+        runner.run_workflow()
+        assert runner.task_statuses["ok_task"] == "SUCCESS"
+        assert runner.task_statuses["cleanup"] == "SKIPPED"
+        assert not log_file.exists()
+
+    def test_all_done_runs_after_failed_dependency(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "fail_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/fail"},
+                },
+                {
+                    "task_key": "always",
+                    "run_if": "ALL_DONE",
+                    "depends_on": [{"task_key": "fail_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/always"},
+                },
+            ],
+            {
+                "fail": "raise RuntimeError('boom')\n",
+                "always": f'with open(r"{log_file}", "a") as f: f.write("always\\n")\n',
+            },
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            runner.run_workflow()
+        assert runner.task_statuses["always"] == "SUCCESS"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["always"]
+
+    def test_none_failed_skips_when_dependency_fails(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "fail_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/fail"},
+                },
+                {
+                    "task_key": "next",
+                    "run_if": "NONE_FAILED",
+                    "depends_on": [{"task_key": "fail_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/next"},
+                },
+            ],
+            {"fail": "raise RuntimeError('boom')\n", "next": "pass\n"},
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            runner.run_workflow()
+        assert runner.task_statuses["next"] == "SKIPPED"
+
+    def test_none_failed_runs_when_dependency_skipped(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "fail_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/fail"},
+                },
+                {
+                    "task_key": "mid",
+                    "run_if": "ALL_SUCCESS",
+                    "depends_on": [{"task_key": "fail_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/mid"},
+                },
+                {
+                    "task_key": "tail",
+                    "run_if": "NONE_FAILED",
+                    "depends_on": [{"task_key": "mid"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/tail"},
+                },
+            ],
+            {
+                "fail": "raise RuntimeError('boom')\n",
+                "mid": "pass\n",
+                "tail": "pass\n",
+            },
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            runner.run_workflow()
+        assert runner.task_statuses["mid"] == "SKIPPED"
+        assert runner.task_statuses["tail"] == "SUCCESS"
+
+    def test_at_least_one_success_runs_if_any_dep_succeeded(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "ok_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/ok"},
+                },
+                {
+                    "task_key": "fail_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/fail"},
+                },
+                {
+                    "task_key": "join",
+                    "run_if": "AT_LEAST_ONE_SUCCESS",
+                    "depends_on": [
+                        {"task_key": "ok_task"},
+                        {"task_key": "fail_task"},
+                    ],
+                    "notebook_task": {"notebook_path": "/Workspace/any/join"},
+                },
+            ],
+            {
+                "ok": "pass\n",
+                "fail": "raise RuntimeError('boom')\n",
+                "join": f'with open(r"{log_file}", "a") as f: f.write("join\\n")\n',
+            },
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            runner.run_workflow()
+        assert runner.task_statuses["join"] == "SUCCESS"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["join"]
+
+    def test_depends_on_outcome_skips_when_status_does_not_match(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "ok_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/ok"},
+                },
+                {
+                    "task_key": "only_on_fail",
+                    "depends_on": [{"task_key": "ok_task", "outcome": "FAILED"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/only_on_fail"},
+                },
+            ],
+            {"ok": "pass\n", "only_on_fail": "pass\n"},
+        )
+        runner.run_workflow()
+        assert runner.task_statuses["only_on_fail"] == "SKIPPED"
+
+    def test_unknown_run_if_raises(self, tmp_path):
+        workflow = {
+            "tasks": [
+                {
+                    "task_key": "t1",
+                    "run_if": "SOMETIMES",
+                    "notebook_task": {"notebook_path": "/a/b"},
+                }
+            ]
+        }
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+        with pytest.raises(ValueError, match="Unsupported run_if"):
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
+
+
+class TestConditionTasks:
+    def _runner(self, tmp_path, tasks, notebooks):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        _write_notebooks(source_dir, notebooks)
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
+        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+
+    def test_true_branch_runs_and_false_branch_skipped(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "producer",
+                    "notebook_task": {"notebook_path": "/Workspace/any/producer"},
+                },
+                {
+                    "task_key": "check",
+                    "depends_on": [{"task_key": "producer"}],
+                    "condition_task": {
+                        "op": "EQUAL_TO",
+                        "left": "{{tasks.producer.values.region}}",
+                        "right": "eu",
+                    },
+                },
+                {
+                    "task_key": "on_true",
+                    "depends_on": [{"task_key": "check", "outcome": "true"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/on_true"},
+                },
+                {
+                    "task_key": "on_false",
+                    "depends_on": [{"task_key": "check", "outcome": "false"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/on_false"},
+                },
+            ],
+            {
+                "producer": 'dbutils.jobs.taskValues.set(key="region", value="eu")\n',
+                "on_true": f'with open(r"{log_file}", "a") as f: f.write("true\\n")\n',
+                "on_false": f'with open(r"{log_file}", "a") as f: f.write("false\\n")\n',
+            },
+        )
+        runner.run_workflow()
+        assert runner.task_statuses["check"] == "SUCCESS"
+        assert runner.task_results["check"] == "true"
+        assert runner.task_statuses["on_true"] == "SUCCESS"
+        assert runner.task_statuses["on_false"] == "SKIPPED"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["true"]
+
+    def test_false_branch_runs_when_condition_fails(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "producer",
+                    "notebook_task": {"notebook_path": "/Workspace/any/producer"},
+                },
+                {
+                    "task_key": "check",
+                    "depends_on": [{"task_key": "producer"}],
+                    "condition_task": {
+                        "op": "EQUAL",
+                        "left": "{{tasks.producer.values.region}}",
+                        "right": "eu",
+                    },
+                },
+                {
+                    "task_key": "on_true",
+                    "depends_on": [{"task_key": "check", "outcome": "true"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/on_true"},
+                },
+                {
+                    "task_key": "on_false",
+                    "depends_on": [{"task_key": "check", "outcome": "false"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/on_false"},
+                },
+            ],
+            {
+                "producer": 'dbutils.jobs.taskValues.set(key="region", value="us")\n',
+                "on_true": f'with open(r"{log_file}", "a") as f: f.write("true\\n")\n',
+                "on_false": f'with open(r"{log_file}", "a") as f: f.write("false\\n")\n',
+            },
+        )
+        runner.run_workflow()
+        assert runner.task_results["check"] == "false"
+        assert runner.task_statuses["on_true"] == "SKIPPED"
+        assert runner.task_statuses["on_false"] == "SUCCESS"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["false"]
+
+    def test_greater_than_compares_numerically(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "producer",
+                    "notebook_task": {"notebook_path": "/Workspace/any/producer"},
+                },
+                {
+                    "task_key": "check",
+                    "depends_on": [{"task_key": "producer"}],
+                    "condition_task": {
+                        "op": "GREATER_THAN",
+                        "left": "{{tasks.producer.values.count}}",
+                        "right": "10",
+                    },
+                },
+                {
+                    "task_key": "on_true",
+                    "depends_on": [{"task_key": "check", "outcome": "true"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/on_true"},
+                },
+            ],
+            {
+                "producer": 'dbutils.jobs.taskValues.set(key="count", value="12")\n',
+                "on_true": f'with open(r"{log_file}", "a") as f: f.write("true\\n")\n',
+            },
+        )
+        runner.run_workflow()
+        assert runner.task_results["check"] == "true"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["true"]
+
+    def test_condition_task_without_notebook_file(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "check",
+                    "condition_task": {
+                        "op": "EQUAL_TO",
+                        "left": "a",
+                        "right": "a",
+                    },
+                }
+            ],
+            {},
+        )
+        runner.run_workflow()
+        assert runner.task_statuses["check"] == "SUCCESS"
+        assert runner.task_results["check"] == "true"
+
+    def test_missing_task_type_still_raises(self, tmp_path):
+        workflow = {"tasks": [{"task_key": "t1"}]}
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+        with pytest.raises(ValueError, match="is missing 'notebook_task'"):
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
+
+
+class TestForEachTasks:
+    def _runner(self, tmp_path, tasks, notebooks):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        _write_notebooks(source_dir, notebooks)
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
+        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+
+    def test_runs_nested_notebook_once_per_input(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "loop",
+                    "for_each_task": {
+                        "inputs": '["a", "b", "c"]',
+                        "concurrency": 1,
+                        "task": {
+                            "task_key": "process",
+                            "notebook_task": {
+                                "notebook_path": "/Workspace/any/process",
+                                "base_parameters": {"item": "{{input}}"},
+                            },
+                        },
+                    },
+                }
+            ],
+            {
+                "process": (
+                    "import os\n"
+                    f'with open(r"{log_file}", "a") as f: f.write(os.environ["item"] + "\\n")\n'
+                )
+            },
+        )
+        runner.run_workflow()
+        assert runner.task_statuses["loop"] == "SUCCESS"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["a", "b", "c"]
+
+    def test_inputs_from_task_values_json_list(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "producer",
+                    "notebook_task": {"notebook_path": "/Workspace/any/producer"},
+                },
+                {
+                    "task_key": "loop",
+                    "depends_on": [{"task_key": "producer"}],
+                    "for_each_task": {
+                        "inputs": "{{tasks.producer.values.items}}",
+                        "task": {
+                            "task_key": "process",
+                            "notebook_task": {
+                                "notebook_path": "/Workspace/any/process",
+                                "base_parameters": {"item": "{{input}}"},
+                            },
+                        },
+                    },
+                },
+            ],
+            {
+                "producer": 'dbutils.jobs.taskValues.set(key="items", value=\'["x", "y"]\')\n',
+                "process": (
+                    "import os\n"
+                    f'with open(r"{log_file}", "a") as f: f.write(os.environ["item"] + "\\n")\n'
+                ),
+            },
+        )
+        runner.run_workflow()
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["x", "y"]
+
+    def test_child_failure_fails_for_each_task(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "loop",
+                    "for_each_task": {
+                        "inputs": '["ok", "bad", "later"]',
+                        "task": {
+                            "task_key": "process",
+                            "notebook_task": {
+                                "notebook_path": "/Workspace/any/process",
+                                "base_parameters": {"item": "{{input}}"},
+                            },
+                        },
+                    },
+                }
+            ],
+            {
+                "process": (
+                    "import os\n"
+                    "item = os.environ['item']\n"
+                    f'with open(r"{log_file}", "a") as f: f.write(item + "\\n")\n'
+                    "if item == 'bad':\n"
+                    "    raise RuntimeError('bad item')\n"
+                )
+            },
+        )
+        with pytest.raises(RuntimeError, match="bad item"):
+            runner.run_workflow()
+        assert runner.task_statuses["loop"] == "FAILED"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["ok", "bad"]
+
+    def test_literal_list_inputs(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "loop",
+                    "for_each_task": {
+                        "inputs": [1, 2],
+                        "task": {
+                            "task_key": "process",
+                            "notebook_task": {
+                                "notebook_path": "/Workspace/any/process",
+                                "base_parameters": {"item": "{{input}}"},
+                            },
+                        },
+                    },
+                }
+            ],
+            {
+                "process": (
+                    "import os\n"
+                    f'with open(r"{log_file}", "a") as f: f.write(os.environ["item"] + "\\n")\n'
+                )
+            },
+        )
+        runner.run_workflow()
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["1", "2"]
+
+
+class TestRepairAndRerun:
+    def _runner(self, tmp_path, tasks, notebooks):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        _write_notebooks(source_dir, notebooks)
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
+        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+
+    def test_only_runs_selected_tasks(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        tasks = [
+            {
+                "task_key": "first_task",
+                "notebook_task": {"notebook_path": "/Workspace/any/first"},
+            },
+            {
+                "task_key": "second_task",
+                "depends_on": [{"task_key": "first_task"}],
+                "notebook_task": {"notebook_path": "/Workspace/any/second"},
+            },
+            {
+                "task_key": "third_task",
+                "depends_on": [{"task_key": "second_task"}],
+                "notebook_task": {"notebook_path": "/Workspace/any/third"},
+            },
+        ]
+        notebooks = {
+            name: f'with open(r"{log_file}", "a") as f: f.write("{name}\\n")\n'
+            for name in ["first", "second", "third"]
+        }
+        runner = self._runner(tmp_path, tasks, notebooks)
+        runner.run_workflow(only=["second_task"])
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["second"]
+        assert runner.task_statuses["second_task"] == "SUCCESS"
+
+    def test_from_task_runs_subgraph(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        tasks = [
+            {
+                "task_key": "first_task",
+                "notebook_task": {"notebook_path": "/Workspace/any/first"},
+            },
+            {
+                "task_key": "second_task",
+                "depends_on": [{"task_key": "first_task"}],
+                "notebook_task": {"notebook_path": "/Workspace/any/second"},
+            },
+            {
+                "task_key": "third_task",
+                "depends_on": [{"task_key": "second_task"}],
+                "notebook_task": {"notebook_path": "/Workspace/any/third"},
+            },
+        ]
+        notebooks = {
+            name: f'with open(r"{log_file}", "a") as f: f.write("{name}\\n")\n'
+            for name in ["first", "second", "third"]
+        }
+        runner = self._runner(tmp_path, tasks, notebooks)
+        runner.run_workflow(from_task="second_task")
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["second", "third"]
+
+    def test_unknown_only_task_raises(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "task_1",
+                    "notebook_task": {"notebook_path": "/Workspace/any/main"},
+                }
+            ],
+            {"main": "pass\n"},
+        )
+        with pytest.raises(ValueError, match="unknown task"):
+            runner.run_workflow(only=["missing"])
+
+    def test_only_and_from_task_are_exclusive(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "task_1",
+                    "notebook_task": {"notebook_path": "/Workspace/any/main"},
+                }
+            ],
+            {"main": "pass\n"},
+        )
+        with pytest.raises(ValueError, match="only one of"):
+            runner.run_workflow(only=["task_1"], from_task="task_1")
+
+
+class TestRetriesAndTimeouts:
+    def _runner(self, tmp_path, tasks, notebooks):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        _write_notebooks(source_dir, notebooks)
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
+        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+
+    def test_retries_until_success(self, tmp_path):
+        counter = tmp_path / "counter.txt"
+        counter.write_text("0", encoding="utf-8")
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "flaky",
+                    "max_retries": 2,
+                    "min_retry_interval_millis": 0,
+                    "notebook_task": {"notebook_path": "/Workspace/any/flaky"},
+                }
+            ],
+            {
+                "flaky": (
+                    f"from pathlib import Path\n"
+                    f"p = Path(r'{counter}')\n"
+                    "n = int(p.read_text())\n"
+                    "p.write_text(str(n + 1))\n"
+                    "if n < 2:\n"
+                    "    raise RuntimeError('not yet')\n"
+                )
+            },
+        )
+        runner.run_workflow()
+        assert runner.task_statuses["flaky"] == "SUCCESS"
+        assert counter.read_text(encoding="utf-8") == "3"
+
+    def test_retry_exhaustion_reraises(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "always_fail",
+                    "max_retries": 1,
+                    "notebook_task": {"notebook_path": "/Workspace/any/always_fail"},
+                }
+            ],
+            {"always_fail": "raise RuntimeError('still bad')\n"},
+        )
+        with pytest.raises(RuntimeError, match="still bad"):
+            runner.run_workflow()
+        assert runner.task_statuses["always_fail"] == "FAILED"
+
+    def test_retry_interval_sleeps(self, tmp_path, monkeypatch):
+        slept = []
+        monkeypatch.setattr(
+            "testbricks.local_workflow_runner.time.sleep",
+            lambda seconds: slept.append(seconds),
+        )
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "flaky",
+                    "max_retries": 1,
+                    "min_retry_interval_millis": 50,
+                    "notebook_task": {"notebook_path": "/Workspace/any/flaky"},
+                }
+            ],
+            {"flaky": "raise RuntimeError('nope')\n"},
+        )
+        with pytest.raises(RuntimeError, match="nope"):
+            runner.run_workflow()
+        assert slept == [0.05]
+
+    def test_timeout_seconds_accepted_not_enforced(self, tmp_path, capsys):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "task_1",
+                    "timeout_seconds": 1,
+                    "notebook_task": {"notebook_path": "/Workspace/any/main"},
+                }
+            ],
+            {"main": "pass\n"},
+        )
+        runner.run_workflow()
+        captured = capsys.readouterr()
+        assert "timeout_seconds=1" in captured.out
+        assert "not enforced" in captured.out
+        assert runner.task_statuses["task_1"] == "SUCCESS"
 
 
 class TestWorkflowValidation:

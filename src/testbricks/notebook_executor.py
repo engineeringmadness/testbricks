@@ -244,7 +244,7 @@ class NotebookExecutor:
         notebook_path = self.resolve_path(path, caller_file=namespace.get("__file__"))
         self.exec_file(notebook_path, namespace, top_level=False)
 
-    def run_isolated(self, path, arguments=None):
+    def run_isolated(self, path, arguments=None, extra=None):
         from testbricks.dbutils.widgets import argument_override_context
 
         arguments = arguments or {}
@@ -252,8 +252,11 @@ class NotebookExecutor:
         for key, value in arguments.items():
             os.environ[key] = str(value)
 
-        namespace = self.namespace(notebook_path)
-        with argument_override_context(arguments.keys()):
+        namespace = self.namespace(notebook_path, extra=extra)
+        with (
+            argument_override_context(arguments.keys()),
+            self._dbutils.jobs.taskValues.isolated_context(),
+        ):
             try:
                 self.exec_file(notebook_path, namespace, top_level=False)
             except NotebookExit as exc:
