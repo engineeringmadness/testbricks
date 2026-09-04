@@ -25,6 +25,7 @@ class LocalWorkflowRunner:
         _require(isinstance(tasks, list), "Workflow JSON must contain a 'tasks' list")
 
         self._task_to_notebook = {}
+        self._notebook_to_task = {}
         self._task_dependencies = {}
         self._notebook_insertion_order = []
         self._notebook_base_params = {}
@@ -79,6 +80,7 @@ class LocalWorkflowRunner:
                 dependency_keys.append(dependency["task_key"])
 
             self._task_to_notebook[task_key] = notebook_name
+            self._notebook_to_task[notebook_name] = task_key
             self._task_dependencies[task_key] = dependency_keys
             self._notebook_insertion_order.append(notebook_name)
             self._notebook_base_params[notebook_name] = base_parameters
@@ -147,6 +149,8 @@ class LocalWorkflowRunner:
 
         configure(self.base_path, source_dir=self.source_dir)
         executor = dbutils.executor
+        store = dbutils.jobs.taskValues
+        store.clear()
         execution_globals = executor.namespace("", extra=extra_globals)
         print(f"\nExecuting workflow: {self.workflow_json_path}\n")
         print("==========================================")
@@ -156,5 +160,12 @@ class LocalWorkflowRunner:
             if not os.path.exists(notebook_path):
                 raise FileNotFoundError(f"Notebook file not found: {notebook_path}")
             base_params = self._notebook_base_params.get(notebook_name, {})
-            with self._seeded_env(base_params), argument_override_context(base_params.keys()):
+            task_key = self._notebook_to_task[notebook_name]
+            with (
+                self._seeded_env(base_params),
+                argument_override_context(base_params.keys()),
+                store.current_task(task_key),
+            ):
+                for param_key, param_value in base_params.items():
+                    store.set(key=param_key, value=param_value, update_env=False)
                 executor.exec_file(notebook_path, execution_globals, top_level=True)

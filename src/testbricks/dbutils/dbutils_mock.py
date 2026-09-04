@@ -1,5 +1,6 @@
 from .data import DataMock
 from .fs import FsMock
+from .jobs import JobsMock
 from .library import LibraryMock
 from .noop import NoOpModule
 from .notebook import NotebookMock
@@ -19,7 +20,7 @@ class DbutilsMock:
         self.secrets = SecretsMock()
         self.widgets = WidgetsMock()
         self.notebook = NotebookMock(self._executor)
-        self.jobs = NoOpModule()
+        self.jobs = JobsMock()
         self.library = LibraryMock()
         self.data = DataMock()
 

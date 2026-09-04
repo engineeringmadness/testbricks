@@ -196,6 +196,104 @@ class TestWorkflowExecution:
         assert marker.read_text(encoding="utf-8") == "from_test"
 
 
+class TestTaskValuesPropagation:
+    def test_downstream_task_reads_upstream_task_value(self, tmp_path):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        marker = tmp_path / "value.txt"
+        (source_dir / "producer.py").write_text(
+            'dbutils.jobs.taskValues.set(key="region", value="eu")\n',
+            encoding="utf-8",
+        )
+        (source_dir / "consumer.py").write_text(
+            'value = dbutils.jobs.taskValues.get(taskKey="producer", key="region")\n'
+            f'with open(r"{marker}", "w") as f: f.write(value)\n',
+            encoding="utf-8",
+        )
+        workflow = {
+            "tasks": [
+                {
+                    "task_key": "producer",
+                    "notebook_task": {"notebook_path": "/Workspace/any/producer"},
+                },
+                {
+                    "task_key": "consumer",
+                    "depends_on": [{"task_key": "producer"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/consumer"},
+                },
+            ]
+        }
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+
+        runner = LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+        runner.run_workflow()
+
+        assert marker.read_text(encoding="utf-8") == "eu"
+
+    def test_base_parameters_seed_task_values(self, tmp_path):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        marker = tmp_path / "seeded_tv.txt"
+        (source_dir / "main.py").write_text(
+            'value = dbutils.jobs.taskValues.get(taskKey="task_1", key="mode")\n'
+            f'with open(r"{marker}", "w") as f: f.write(value)\n',
+            encoding="utf-8",
+        )
+        workflow = {
+            "tasks": [
+                {
+                    "task_key": "task_1",
+                    "notebook_task": {
+                        "notebook_path": "/Workspace/any/main",
+                        "base_parameters": {"mode": "default"},
+                    },
+                }
+            ]
+        }
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+
+        runner = LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+        runner.run_workflow()
+
+        assert marker.read_text(encoding="utf-8") == "default"
+
+    def test_shared_namespace_sees_set_immediately_in_later_task(self, tmp_path):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        marker = tmp_path / "shared.txt"
+        (source_dir / "first.py").write_text(
+            'dbutils.jobs.taskValues.set(key="flag", value="on")\n',
+            encoding="utf-8",
+        )
+        (source_dir / "second.py").write_text(
+            'value = dbutils.jobs.taskValues.get(taskKey="first_task", key="flag")\n'
+            f'with open(r"{marker}", "w") as f: f.write(value)\n',
+            encoding="utf-8",
+        )
+        workflow = {
+            "tasks": [
+                {
+                    "task_key": "first_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/first"},
+                },
+                {
+                    "task_key": "second_task",
+                    "depends_on": [{"task_key": "first_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/second"},
+                },
+            ]
+        }
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+
+        runner = LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+        runner.run_workflow()
+
+        assert marker.read_text(encoding="utf-8") == "on"
+
+
 class TestWorkflowValidation:
     def test_missing_tasks_raises(self, tmp_path):
         workflow_path = tmp_path / "workflow.json"

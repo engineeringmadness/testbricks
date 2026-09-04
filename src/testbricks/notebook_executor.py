@@ -253,7 +253,10 @@ class NotebookExecutor:
             os.environ[key] = str(value)
 
         namespace = self.namespace(notebook_path)
-        with argument_override_context(arguments.keys()):
+        with (
+            argument_override_context(arguments.keys()),
+            self._dbutils.jobs.taskValues.isolated_context(),
+        ):
             try:
                 self.exec_file(notebook_path, namespace, top_level=False)
             except NotebookExit as exc:
