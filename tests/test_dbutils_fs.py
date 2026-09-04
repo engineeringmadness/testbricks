@@ -185,6 +185,26 @@ class TestLs:
         assert dbutils.fs.ls("dbfs:/empty") == []
 
 
+class TestPut:
+    def test_put_creates_file_and_parents(self, tmp_path):
+        configure(str(tmp_path))
+        assert dbutils.fs.put("dbfs:/nested/out.txt", "hello") is True
+        assert (tmp_path / "nested" / "out.txt").read_text(encoding="utf-8") == "hello"
+
+    def test_put_existing_without_overwrite_raises(self, tmp_path):
+        configure(str(tmp_path))
+        (tmp_path / "out.txt").write_text("old", encoding="utf-8")
+        with pytest.raises(DbutilsError, match="file already exists"):
+            dbutils.fs.put("dbfs:/out.txt", "new")
+        assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "old"
+
+    def test_put_overwrite_replaces_contents(self, tmp_path):
+        configure(str(tmp_path))
+        (tmp_path / "out.txt").write_text("old", encoding="utf-8")
+        assert dbutils.fs.put("dbfs:/out.txt", "new", overwrite=True) is True
+        assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "new"
+
+
 class TestNoOpStubs:
     def test_unimplemented_fs_method_returns_true(self, tmp_path):
         configure(str(tmp_path))

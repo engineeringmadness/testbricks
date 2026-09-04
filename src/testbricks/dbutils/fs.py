@@ -66,6 +66,18 @@ class FsMock:
             lambda: os.makedirs(target, exist_ok=True),
         )
 
+    def put(self, file, contents, overwrite=False):
+        target = self._resolve(file)
+        if os.path.exists(target) and not overwrite:
+            raise DbutilsError(f"file already exists: {file}")
+
+        def _write():
+            self._ensure_parent(target)
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write("" if contents is None else str(contents))
+
+        return self._os_call(f"failed to put {file}", _write)
+
     def ls(self, path):
         target = self._resolve(path)
         if not os.path.exists(target):
