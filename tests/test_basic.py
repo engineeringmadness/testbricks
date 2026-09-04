@@ -272,6 +272,48 @@ class TestWriteTable:
             df.write.mode("upsert").saveAsTable("default.people")
 
 
+class TestInsertInto:
+    def test_insert_into_appends_to_existing_table(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Bob", 25)], ["Name", "Age"])
+        second.write.insertInto("default.people")
+
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.count() == 2
+        assert {row.Name for row in result.collect()} == {"Alice", "Bob"}
+
+    def test_insert_into_overwrite_kwarg_replaces_rows(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30), ("Bob", 25)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Charlie", 35)], ["Name", "Age"])
+        second.write.insertInto("default.people", overwrite=True)
+
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.count() == 1
+        assert result.collect()[0].Name == "Charlie"
+
+    def test_insert_into_honors_writer_overwrite_mode(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Dana", 40)], ["Name", "Age"])
+        second.write.mode("overwrite").insertInto("default.people")
+
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.count() == 1
+        assert result.collect()[0].Name == "Dana"
+
+    def test_insert_into_missing_table_raises(self, temp_spark):
+        from pyspark.sql.utils import AnalysisException
+
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        with pytest.raises(AnalysisException, match="TABLE_OR_VIEW_NOT_FOUND"):
+            df.write.insertInto("default.missing")
+
+
 class TestWriteTransformedTable:
     def test_write_transformed_table_creates_expected_csv(self, spark):
         # Uses the shared spark fixture because the source table lives in tests/data.

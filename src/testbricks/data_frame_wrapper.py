@@ -1,5 +1,6 @@
 from pyspark.sql import DataFrame
 from pyspark.sql.group import GroupedData
+from pyspark.sql.utils import AnalysisException
 
 from .catalog import TableIdentifier
 
@@ -67,6 +68,27 @@ class DataFrameWriter(_IoBuilder):
             ident,
             self._dataframe,
             mode=self._mode,
+            header=header,
+        )
+
+    def insertInto(self, table_name, overwrite=False):
+        """Append or overwrite rows in an existing table (Spark DataFrameWriter.insertInto)."""
+        ident = TableIdentifier.parse(table_name)
+        if not self._spark._catalog.exists(ident):
+            raise AnalysisException(
+                f"[TABLE_OR_VIEW_NOT_FOUND] The table or view {ident} cannot be found. "
+                "Verify the table exists before calling insertInto."
+            )
+        writer_mode = str(self._mode).strip().lower() if self._mode else None
+        if overwrite or writer_mode == "overwrite":
+            mode = "overwrite"
+        else:
+            mode = "append"
+        header = self._options.get("header", "true").lower() == "true"
+        self._spark._catalog.save_dataframe(
+            ident,
+            self._dataframe,
+            mode=mode,
             header=header,
         )
 
