@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import pytest
 
 from testbricks.dbutils import DbutilsError, dbutils
+from testbricks.dbutils.secrets import SecretMetadata, SecretScope
 
 
 @pytest.fixture(autouse=True)
@@ -42,3 +43,30 @@ class TestGetBytes:
     def test_get_bytes_missing_secret_raises(self):
         with pytest.raises(DbutilsError, match="does not exist"):
             dbutils.secrets.getBytes("jdbc", "password")
+
+
+class TestList:
+    def test_list_returns_keys_for_scope(self):
+        os.environ["DBUTILS_SECRET_jdbc_password"] = "secret-value"
+        os.environ["DBUTILS_SECRET_jdbc_user"] = "alice"
+        os.environ["DBUTILS_SECRET_other_token"] = "tok"
+        listed = dbutils.secrets.list("jdbc")
+        assert listed == [SecretMetadata(key="password"), SecretMetadata(key="user")]
+
+    def test_list_unknown_scope_returns_empty(self):
+        os.environ["DBUTILS_SECRET_jdbc_password"] = "secret-value"
+        assert dbutils.secrets.list("missing") == []
+
+
+class TestListScopes:
+    def test_list_scopes_returns_unique_scope_names(self):
+        os.environ["DBUTILS_SECRET_jdbc_password"] = "secret-value"
+        os.environ["DBUTILS_SECRET_jdbc_user"] = "alice"
+        os.environ["DBUTILS_SECRET_kv_api-key"] = "token"
+        assert dbutils.secrets.listScopes() == [
+            SecretScope(name="jdbc"),
+            SecretScope(name="kv"),
+        ]
+
+    def test_list_scopes_empty_when_no_secrets(self):
+        assert dbutils.secrets.listScopes() == []
