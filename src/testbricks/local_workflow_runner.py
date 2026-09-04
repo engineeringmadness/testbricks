@@ -321,6 +321,30 @@ class LocalWorkflowRunner:
         lines.append(" -> ".join(self.execution_order))
         return "\n".join(lines)
 
+    def _selected_tasks(self, only, from_task):
+        if only is not None and from_task is not None:
+            raise ValueError("Pass only one of 'only' or 'from_task'")
+        if only is None and from_task is None:
+            return None
+        if only is not None:
+            selected = set(only)
+            unknown = selected - set(self._task_kind)
+            _require(not unknown, f"unknown task in only: {sorted(unknown)}")
+            return selected
+        _require(
+            from_task in self._task_kind,
+            f"unknown task in from_task: '{from_task}'",
+        )
+        selected = {from_task}
+        stack = [from_task]
+        while stack:
+            current = stack.pop()
+            for successor in self.dag.get(current, ()):
+                if successor not in selected:
+                    selected.add(successor)
+                    stack.append(successor)
+        return selected
+
     def _executor(self):
         from testbricks.dbutils import dbutils
 
@@ -435,7 +459,7 @@ class LocalWorkflowRunner:
                     else:
                         os.environ[key] = original
 
-    def run_workflow(self, extra_globals=None):
+    def run_workflow(self, extra_globals=None, only=None, from_task=None):
         from testbricks.dbutils import configure, dbutils
 
         configure(self.base_path, source_dir=self.source_dir)
@@ -448,8 +472,12 @@ class LocalWorkflowRunner:
         print(self.format_dag())
         self.task_statuses = {}
         self.task_results = {}
+        selected = self._selected_tasks(only, from_task)
         first_error = None
         for task_key in self.execution_order:
+            if selected is not None and task_key not in selected:
+                self.task_statuses[task_key] = "SUCCESS"
+                continue
             if not self._is_eligible(task_key):
                 self.task_statuses[task_key] = "SKIPPED"
                 print(f"Skipping task '{task_key}': run_if not met")

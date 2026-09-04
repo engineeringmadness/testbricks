@@ -827,6 +827,97 @@ class TestForEachTasks:
         assert log_file.read_text(encoding="utf-8").splitlines() == ["1", "2"]
 
 
+class TestRepairAndRerun:
+    def _runner(self, tmp_path, tasks, notebooks):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        _write_notebooks(source_dir, notebooks)
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
+        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+
+    def test_only_runs_selected_tasks(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        tasks = [
+            {
+                "task_key": "first_task",
+                "notebook_task": {"notebook_path": "/Workspace/any/first"},
+            },
+            {
+                "task_key": "second_task",
+                "depends_on": [{"task_key": "first_task"}],
+                "notebook_task": {"notebook_path": "/Workspace/any/second"},
+            },
+            {
+                "task_key": "third_task",
+                "depends_on": [{"task_key": "second_task"}],
+                "notebook_task": {"notebook_path": "/Workspace/any/third"},
+            },
+        ]
+        notebooks = {
+            name: f'with open(r"{log_file}", "a") as f: f.write("{name}\\n")\n'
+            for name in ["first", "second", "third"]
+        }
+        runner = self._runner(tmp_path, tasks, notebooks)
+        runner.run_workflow(only=["second_task"])
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["second"]
+        assert runner.task_statuses["second_task"] == "SUCCESS"
+
+    def test_from_task_runs_subgraph(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        tasks = [
+            {
+                "task_key": "first_task",
+                "notebook_task": {"notebook_path": "/Workspace/any/first"},
+            },
+            {
+                "task_key": "second_task",
+                "depends_on": [{"task_key": "first_task"}],
+                "notebook_task": {"notebook_path": "/Workspace/any/second"},
+            },
+            {
+                "task_key": "third_task",
+                "depends_on": [{"task_key": "second_task"}],
+                "notebook_task": {"notebook_path": "/Workspace/any/third"},
+            },
+        ]
+        notebooks = {
+            name: f'with open(r"{log_file}", "a") as f: f.write("{name}\\n")\n'
+            for name in ["first", "second", "third"]
+        }
+        runner = self._runner(tmp_path, tasks, notebooks)
+        runner.run_workflow(from_task="second_task")
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["second", "third"]
+
+    def test_unknown_only_task_raises(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "task_1",
+                    "notebook_task": {"notebook_path": "/Workspace/any/main"},
+                }
+            ],
+            {"main": "pass\n"},
+        )
+        with pytest.raises(ValueError, match="unknown task"):
+            runner.run_workflow(only=["missing"])
+
+    def test_only_and_from_task_are_exclusive(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "task_1",
+                    "notebook_task": {"notebook_path": "/Workspace/any/main"},
+                }
+            ],
+            {"main": "pass\n"},
+        )
+        with pytest.raises(ValueError, match="only one of"):
+            runner.run_workflow(only=["task_1"], from_task="task_1")
+
+
 class TestWorkflowValidation:
     def test_missing_tasks_raises(self, tmp_path):
         workflow_path = tmp_path / "workflow.json"
