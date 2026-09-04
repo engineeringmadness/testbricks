@@ -222,6 +222,81 @@ class DataFrameWriter(_IoBuilder):
         )
 
 
+class DataFrameWriterV2:
+    """Minimal Spark DataFrameWriterV2 façade over ``saveAsTable``.
+
+    Implements ``create`` / ``replace`` / ``append``. Full V2 verbs such as
+    ``createOrReplace`` and ``overwritePartitions`` raise ``NotImplementedError``
+    with a migration hint to ``saveAsTable``.
+    """
+
+    def __init__(self, spark_proxy, dataframe, table_name):
+        self._spark = spark_proxy
+        self._dataframe = dataframe
+        self._table_name = table_name
+        self._options = {}
+        self._partitioned_by = ()
+        self._using = None
+
+    def using(self, provider):
+        self._using = provider
+        return self
+
+    def option(self, key, value):
+        self._options[key] = value
+        return self
+
+    def options(self, **kwargs):
+        self._options.update(kwargs)
+        return self
+
+    def tableProperty(self, property, value):
+        return self
+
+    def partitionedBy(self, *cols):
+        flattened = []
+        for col in cols:
+            if isinstance(col, (list, tuple)):
+                flattened.extend(col)
+            else:
+                flattened.append(col)
+        self._partitioned_by = tuple(flattened)
+        return self
+
+    def _writer(self, mode):
+        writer = DataFrameWriter(self._spark, self._dataframe)
+        writer._mode = mode
+        writer._format = self._using
+        writer._partition_by = self._partitioned_by
+        writer._options.update(self._options)
+        return writer
+
+    def create(self):
+        self._writer("error").saveAsTable(self._table_name)
+
+    def replace(self):
+        writer = self._writer("overwrite")
+        writer._options.setdefault("overwriteSchema", "true")
+        writer.saveAsTable(self._table_name)
+
+    def append(self):
+        self._writer("append").saveAsTable(self._table_name)
+
+    def createOrReplace(self):
+        raise NotImplementedError(
+            "writeTo(...).createOrReplace() is not implemented. "
+            "Use df.write.mode('overwrite').option('overwriteSchema', 'true')"
+            ".saveAsTable(...) instead."
+        )
+
+    def overwritePartitions(self):
+        raise NotImplementedError(
+            "writeTo(...).overwritePartitions() is not implemented. "
+            "Use df.write.mode('overwrite').option('replaceWhere', predicate)"
+            ".saveAsTable(...) instead."
+        )
+
+
 def _wrap_spark_result(spark_proxy, result):
     if isinstance(result, DataFrame):
         return DataFrameWrapper(spark_proxy, result)
@@ -264,3 +339,6 @@ class DataFrameWrapper:
         if self._write is None:
             self._write = DataFrameWriter(self._spark, self._dataframe)
         return self._write
+
+    def writeTo(self, table):
+        return DataFrameWriterV2(self._spark, self._dataframe, table)

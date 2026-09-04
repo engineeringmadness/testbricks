@@ -104,7 +104,7 @@ Schema flags:
 | `mergeSchema=false` (default) + append | raise `SchemaMismatchError` if columns differ |
 | same column, incompatible types | always raise `SchemaMismatchError` (merge only adds columns) |
 
-`partitionBy` columns must exist on the DataFrame. `option("replaceWhere", "<predicate>")` with `mode("overwrite")` deletes matching stored rows then appends the new frame. `bucketBy` / `sortBy` are accepted no-ops (bucketing is not simulated).
+`partitionBy` columns must exist on the DataFrame. `option("replaceWhere", "<predicate>")` with `mode("overwrite")` deletes matching stored rows then appends the new frame. `bucketBy` / `sortBy` are accepted no-ops (bucketing is not simulated). `df.writeTo(table).using(...).create()` / `.replace()` / `.append()` maps onto the same table writer; `createOrReplace` and `overwritePartitions` raise `NotImplementedError` with a `saveAsTable` hint.
 
 ## Key Modules
 1. `SparkProxy` - A Spark proxy that manipulates incoming Delta table reads and writes and redirects them to interactions with CSV files stored locally

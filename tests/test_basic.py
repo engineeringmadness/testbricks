@@ -564,6 +564,33 @@ class TestDataFrameWriter:
         assert temp_spark.sql("SELECT * FROM default.bucketed").count() == 1
 
 
+class TestWriteTo:
+    def test_write_to_create_replace_and_append(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.writeTo("default.people").using("delta").partitionedBy("Age").create()
+        assert temp_spark.sql("SELECT * FROM default.people").count() == 1
+
+        from pyspark.sql.utils import AnalysisException
+
+        with pytest.raises(AnalysisException, match="already exists"):
+            first.writeTo("default.people").create()
+
+        replacement = _make_df(temp_spark, [("Bob",)], ["Name"])
+        replacement.writeTo("default.people").option("header", "true").replace()
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.columns == ["Name"]
+        assert result.collect()[0].Name == "Bob"
+
+        extra = _make_df(temp_spark, [("Carol",)], ["Name"])
+        extra.writeTo("default.people").append()
+        assert temp_spark.sql("SELECT * FROM default.people").count() == 2
+
+    def test_write_to_create_or_replace_raises_with_hint(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        with pytest.raises(NotImplementedError, match="saveAsTable"):
+            df.writeTo("default.people").createOrReplace()
+
+
 class TestSparkProxyLifecycle:
     def test_base_path_unchanged(self, spark):
         assert spark._base_path == TEST_DIR
