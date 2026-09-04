@@ -5,6 +5,26 @@ from pyspark.sql.utils import AnalysisException
 from .catalog import TableIdentifier
 
 
+_FILE_FORMATS = {
+    "parquet": "parquet",
+    "delta": "parquet",
+    "json": "json",
+    "csv": "csv",
+}
+
+
+def _resolve_file_format(fmt) -> str:
+    if fmt is None:
+        return "parquet"
+    resolved = _FILE_FORMATS.get(str(fmt).strip().lower())
+    if resolved is None:
+        raise ValueError(
+            f"Unknown format '{fmt}' for file save(). "
+            "Supported formats: parquet, json, csv, delta (delta is stored as parquet)."
+        )
+    return resolved
+
+
 class _IoBuilder:
     """Shared format/option chaining used by both reader and writer."""
 
@@ -60,12 +80,37 @@ class DataFrameWriter(_IoBuilder):
         return self
 
     def csv(self, path):
+        self._native_writer().csv(self._spark._get_full_path(path))
+
+    def parquet(self, path):
+        self._native_writer().parquet(self._spark._get_full_path(path))
+
+    def json(self, path):
+        self._native_writer().json(self._spark._get_full_path(path))
+
+    def save(self, path, format=None, **options):
+        if options:
+            self._options.update(options)
+        fmt = format or self._format or "parquet"
+        resolved = _resolve_file_format(fmt)
+        full_path = self._spark._get_full_path(path)
+        writer = self._native_writer()
+        if resolved == "csv":
+            writer.csv(full_path)
+        elif resolved == "json":
+            writer.json(full_path)
+        else:
+            writer.parquet(full_path)
+
+    def _native_writer(self):
         writer = self._dataframe.write
         if self._mode:
             writer = writer.mode(self._mode)
+        if self._partition_by:
+            writer = writer.partitionBy(*self._partition_by)
         for key, value in self._options.items():
             writer = writer.option(key, value)
-        writer.csv(self._spark._get_full_path(path))
+        return writer
 
     def _validate_partition_columns(self):
         if not self._partition_by:

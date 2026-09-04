@@ -421,6 +421,43 @@ class TestCsvWriteOptions:
         assert "|" in body
 
 
+class TestFileWriteDispatch:
+    @pytest.mark.skipif(sys.platform == "win32", reason="Native Spark file writers require Hadoop winutils on Windows")
+    def test_parquet_write_is_readable(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        df.write.mode("overwrite").parquet("output/people_parquet")
+        path = os.path.join(temp_spark._base_path, "output", "people_parquet")
+        result = temp_spark._spark_session.read.parquet(path)
+        assert result.count() == 1
+        assert result.collect()[0].Name == "Alice"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Native Spark file writers require Hadoop winutils on Windows")
+    def test_json_write_is_readable(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        df.write.mode("overwrite").json("output/people_json")
+        path = os.path.join(temp_spark._base_path, "output", "people_json")
+        result = temp_spark._spark_session.read.json(path)
+        assert result.count() == 1
+        assert result.collect()[0].Name == "Alice"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Native Spark file writers require Hadoop winutils on Windows")
+    def test_format_delta_save_writes_parquet(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        df.write.format("delta").mode("overwrite").save("output/people_delta")
+        path = os.path.join(temp_spark._base_path, "output", "people_delta")
+        result = temp_spark._spark_session.read.parquet(path)
+        assert result.count() == 1
+        parquet_files = [
+            name for name in os.listdir(path) if name.endswith(".parquet")
+        ]
+        assert parquet_files
+
+    def test_unknown_file_format_raises(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        with pytest.raises(ValueError, match="Unknown format"):
+            df.write.format("avro").save("output/people_avro")
+
+
 class TestWriteTransformedTable:
     def test_write_transformed_table_creates_expected_csv(self, spark):
         # Uses the shared spark fixture because the source table lives in tests/data.
