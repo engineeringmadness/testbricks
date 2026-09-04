@@ -294,6 +294,248 @@ class TestTaskValuesPropagation:
         assert marker.read_text(encoding="utf-8") == "on"
 
 
+def _write_notebooks(source_dir, mapping):
+    for name, body in mapping.items():
+        (source_dir / f"{name}.py").write_text(body, encoding="utf-8")
+
+
+class TestRunIfConditions:
+    def _runner(self, tmp_path, tasks, notebooks):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        _write_notebooks(source_dir, notebooks)
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
+        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+
+    def test_all_success_skips_when_dependency_fails(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "fail_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/fail"},
+                },
+                {
+                    "task_key": "downstream",
+                    "run_if": "ALL_SUCCESS",
+                    "depends_on": [{"task_key": "fail_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/down"},
+                },
+            ],
+            {
+                "fail": "raise RuntimeError('boom')\n",
+                "down": f'with open(r"{log_file}", "a") as f: f.write("down\\n")\n',
+            },
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            runner.run_workflow()
+        assert runner.task_statuses["fail_task"] == "FAILED"
+        assert runner.task_statuses["downstream"] == "SKIPPED"
+        assert not log_file.exists()
+
+    def test_all_failed_runs_when_dependency_fails(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "fail_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/fail"},
+                },
+                {
+                    "task_key": "cleanup",
+                    "run_if": "ALL_FAILED",
+                    "depends_on": [{"task_key": "fail_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/cleanup"},
+                },
+            ],
+            {
+                "fail": "raise RuntimeError('boom')\n",
+                "cleanup": f'with open(r"{log_file}", "a") as f: f.write("cleanup\\n")\n',
+            },
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            runner.run_workflow()
+        assert runner.task_statuses["fail_task"] == "FAILED"
+        assert runner.task_statuses["cleanup"] == "SUCCESS"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["cleanup"]
+
+    def test_all_failed_skips_when_dependency_succeeds(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "ok_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/ok"},
+                },
+                {
+                    "task_key": "cleanup",
+                    "run_if": "ALL_FAILED",
+                    "depends_on": [{"task_key": "ok_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/cleanup"},
+                },
+            ],
+            {
+                "ok": "pass\n",
+                "cleanup": f'with open(r"{log_file}", "a") as f: f.write("cleanup\\n")\n',
+            },
+        )
+        runner.run_workflow()
+        assert runner.task_statuses["ok_task"] == "SUCCESS"
+        assert runner.task_statuses["cleanup"] == "SKIPPED"
+        assert not log_file.exists()
+
+    def test_all_done_runs_after_failed_dependency(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "fail_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/fail"},
+                },
+                {
+                    "task_key": "always",
+                    "run_if": "ALL_DONE",
+                    "depends_on": [{"task_key": "fail_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/always"},
+                },
+            ],
+            {
+                "fail": "raise RuntimeError('boom')\n",
+                "always": f'with open(r"{log_file}", "a") as f: f.write("always\\n")\n',
+            },
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            runner.run_workflow()
+        assert runner.task_statuses["always"] == "SUCCESS"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["always"]
+
+    def test_none_failed_skips_when_dependency_fails(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "fail_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/fail"},
+                },
+                {
+                    "task_key": "next",
+                    "run_if": "NONE_FAILED",
+                    "depends_on": [{"task_key": "fail_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/next"},
+                },
+            ],
+            {"fail": "raise RuntimeError('boom')\n", "next": "pass\n"},
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            runner.run_workflow()
+        assert runner.task_statuses["next"] == "SKIPPED"
+
+    def test_none_failed_runs_when_dependency_skipped(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "fail_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/fail"},
+                },
+                {
+                    "task_key": "mid",
+                    "run_if": "ALL_SUCCESS",
+                    "depends_on": [{"task_key": "fail_task"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/mid"},
+                },
+                {
+                    "task_key": "tail",
+                    "run_if": "NONE_FAILED",
+                    "depends_on": [{"task_key": "mid"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/tail"},
+                },
+            ],
+            {
+                "fail": "raise RuntimeError('boom')\n",
+                "mid": "pass\n",
+                "tail": "pass\n",
+            },
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            runner.run_workflow()
+        assert runner.task_statuses["mid"] == "SKIPPED"
+        assert runner.task_statuses["tail"] == "SUCCESS"
+
+    def test_at_least_one_success_runs_if_any_dep_succeeded(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "ok_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/ok"},
+                },
+                {
+                    "task_key": "fail_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/fail"},
+                },
+                {
+                    "task_key": "join",
+                    "run_if": "AT_LEAST_ONE_SUCCESS",
+                    "depends_on": [
+                        {"task_key": "ok_task"},
+                        {"task_key": "fail_task"},
+                    ],
+                    "notebook_task": {"notebook_path": "/Workspace/any/join"},
+                },
+            ],
+            {
+                "ok": "pass\n",
+                "fail": "raise RuntimeError('boom')\n",
+                "join": f'with open(r"{log_file}", "a") as f: f.write("join\\n")\n',
+            },
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            runner.run_workflow()
+        assert runner.task_statuses["join"] == "SUCCESS"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["join"]
+
+    def test_depends_on_outcome_skips_when_status_does_not_match(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "ok_task",
+                    "notebook_task": {"notebook_path": "/Workspace/any/ok"},
+                },
+                {
+                    "task_key": "only_on_fail",
+                    "depends_on": [{"task_key": "ok_task", "outcome": "FAILED"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/only_on_fail"},
+                },
+            ],
+            {"ok": "pass\n", "only_on_fail": "pass\n"},
+        )
+        runner.run_workflow()
+        assert runner.task_statuses["only_on_fail"] == "SKIPPED"
+
+    def test_unknown_run_if_raises(self, tmp_path):
+        workflow = {
+            "tasks": [
+                {
+                    "task_key": "t1",
+                    "run_if": "SOMETIMES",
+                    "notebook_task": {"notebook_path": "/a/b"},
+                }
+            ]
+        }
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+        with pytest.raises(ValueError, match="Unsupported run_if"):
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
+
+
 class TestWorkflowValidation:
     def test_missing_tasks_raises(self, tmp_path):
         workflow_path = tmp_path / "workflow.json"
