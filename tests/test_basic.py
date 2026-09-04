@@ -555,6 +555,14 @@ class TestDataFrameWriter:
         assert writer._partition_by == ("id",)
         assert writer._options == {"header": "true"}
 
+    def test_bucket_by_sort_by_chain_is_noop(self, temp_spark):
+        df = _make_df(temp_spark, [(1, "a")], ["id", "name"])
+        writer = df.write.mode("overwrite").bucketBy(4, "id").sortBy("name")
+        assert writer._bucket_by == (4, ("id",))
+        assert writer._sort_by == ("name",)
+        writer.saveAsTable("default.bucketed")
+        assert temp_spark.sql("SELECT * FROM default.bucketed").count() == 1
+
 
 class TestSparkProxyLifecycle:
     def test_base_path_unchanged(self, spark):

@@ -1,8 +1,12 @@
+import logging
+
 from pyspark.sql import DataFrame
 from pyspark.sql.group import GroupedData
 from pyspark.sql.utils import AnalysisException
 
 from .catalog import TableIdentifier
+
+logger = logging.getLogger(__name__)
 
 
 _FILE_FORMATS = {
@@ -64,6 +68,8 @@ class DataFrameWriter(_IoBuilder):
         self._dataframe = dataframe
         self._mode = None
         self._partition_by = ()
+        self._bucket_by = None
+        self._sort_by = ()
 
     def partitionBy(self, *cols):
         flattened = []
@@ -73,6 +79,29 @@ class DataFrameWriter(_IoBuilder):
             else:
                 flattened.append(col)
         self._partition_by = tuple(flattened)
+        return self
+
+    def bucketBy(self, numBuckets, *cols):
+        """Accepted no-op: Hive-style bucketing is not simulated locally."""
+        flattened = []
+        for col in cols:
+            if isinstance(col, (list, tuple)):
+                flattened.extend(col)
+            else:
+                flattened.append(col)
+        self._bucket_by = (numBuckets, tuple(flattened))
+        logger.info(
+            "bucketBy(%s, %s) is accepted but not simulated",
+            numBuckets,
+            flattened,
+        )
+        return self
+
+    def sortBy(self, col, *cols):
+        """Accepted no-op: sortBy is not simulated locally."""
+        flattened = [col, *cols]
+        self._sort_by = tuple(flattened)
+        logger.info("sortBy(%s) is accepted but not simulated", flattened)
         return self
 
     def mode(self, save_mode):
