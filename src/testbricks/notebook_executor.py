@@ -1,5 +1,6 @@
 import os
 import re
+import shlex
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -13,6 +14,7 @@ RUN_COMMAND_PATTERN = re.compile(
     re.MULTILINE,
 )
 SH_START_PATTERN = re.compile(r"^(\s*)#\s*(?:MAGIC\s+)?%sh(?:\s+(.*))?\s*$")
+FS_START_PATTERN = re.compile(r"^(\s*)#\s*(?:MAGIC\s+)?%fs(?:\s+(.*))?\s*$")
 MAGIC_BODY_PATTERN = re.compile(r"^\s*#\s*MAGIC\s+(.*)$")
 WORKSPACE_PREFIXES = ("/Workspace/", "/Repos/")
 
@@ -91,6 +93,58 @@ def transform_sh_commands(source):
             output.append(
                 f"{indent}__run_shell__({script!r}, fail_on_error={fail_on_error}){newline}"
             )
+    return "".join(output)
+
+
+def _fs_python_call(command, args):
+    if not command.isidentifier():
+        raise ValueError(f"Invalid %fs command: {command}")
+    overwrite = None
+    if command == "put" and args and args[-1].lower() in ("true", "false"):
+        overwrite = args[-1].lower() == "true"
+        args = args[:-1]
+    rendered = ", ".join(repr(arg) for arg in args)
+    if overwrite is None:
+        return f"dbutils.fs.{command}({rendered})"
+    prefix = f"{rendered}, " if rendered else ""
+    return f"dbutils.fs.{command}({prefix}overwrite={overwrite})"
+
+
+def transform_fs_commands(source):
+    lines = source.splitlines(keepends=True)
+    output = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        match = FS_START_PATTERN.match(line.rstrip("\n"))
+        if not match:
+            output.append(line)
+            index += 1
+            continue
+        indent, remainder = match.groups()
+        parts = shlex.split(remainder or "")
+        started_with_magic = "MAGIC" in line.split("%fs", 1)[0]
+        index += 1
+        extra = []
+        if started_with_magic:
+            while index < len(lines):
+                body_match = MAGIC_BODY_PATTERN.match(lines[index].rstrip("\n"))
+                if not body_match:
+                    break
+                body = body_match.group(1)
+                if body.lstrip().startswith("%"):
+                    break
+                extra.append(body)
+                index += 1
+        if extra:
+            extra_text = "\n".join(extra)
+            if extra_text.strip():
+                parts.extend(shlex.split(extra_text))
+        if not parts:
+            continue
+        command, *args = parts
+        newline = "\n" if line.endswith("\n") else ""
+        output.append(f"{indent}{_fs_python_call(command, args)}{newline}")
     return "".join(output)
 
 
@@ -175,7 +229,9 @@ class NotebookExecutor:
                 source = notebook_file.read()
             namespace["__file__"] = file_path
             namespace["__run_shell__"] = run_shell
-            transformed = transform_sh_commands(transform_run_commands(source, file_path))
+            transformed = transform_fs_commands(
+                transform_sh_commands(transform_run_commands(source, file_path))
+            )
             try:
                 exec(compile(transformed, file_path, "exec"), namespace, namespace)
             except NotebookExit as exc:
