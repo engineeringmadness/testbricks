@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from contextlib import contextmanager
 from graphlib import CycleError, TopologicalSorter
 
@@ -15,6 +16,20 @@ RUN_IF_VALUES = {
     "NONE_FAILED",
     "AT_LEAST_ONE_FAILED",
 }
+
+CONDITION_OPS = {
+    "EQUAL",
+    "EQUAL_TO",
+    "NOT_EQUAL",
+    "NOT_EQUAL_TO",
+    "GREATER_THAN",
+    "GREATER_THAN_OR_EQUAL",
+    "LESS_THAN",
+    "LESS_THAN_OR_EQUAL",
+}
+
+TASK_VALUE_RE = re.compile(r"^\{\{\s*tasks\.([^.]+)\.values\.([^}]+?)\s*\}\}$")
+JOB_PARAM_RE = re.compile(r"^\{\{\s*job\.parameters\.([^}]+?)\s*\}\}$")
 
 
 def _require(condition, message):
@@ -40,6 +55,40 @@ def _matches_run_if(run_if, statuses):
     return False
 
 
+def _as_numbers(left, right):
+    try:
+        return float(left), float(right)
+    except (TypeError, ValueError):
+        return None
+
+
+def _compare_condition(op, left, right):
+    normalized = op.upper()
+    nums = _as_numbers(left, right)
+    if normalized in {"EQUAL", "EQUAL_TO"}:
+        if nums is not None:
+            return nums[0] == nums[1]
+        return str(left) == str(right)
+    if normalized in {"NOT_EQUAL", "NOT_EQUAL_TO"}:
+        if nums is not None:
+            return nums[0] != nums[1]
+        return str(left) != str(right)
+    if nums is None:
+        raise ValueError(
+            f"Condition op '{op}' requires numeric operands, got {left!r} and {right!r}"
+        )
+    left_n, right_n = nums
+    if normalized == "GREATER_THAN":
+        return left_n > right_n
+    if normalized == "GREATER_THAN_OR_EQUAL":
+        return left_n >= right_n
+    if normalized == "LESS_THAN":
+        return left_n < right_n
+    if normalized == "LESS_THAN_OR_EQUAL":
+        return left_n <= right_n
+    raise ValueError(f"Unsupported condition op '{op}'")
+
+
 class LocalWorkflowRunner:
     def __init__(self, source_dir, workflow_json_path, base_path):
         self.source_dir = source_dir
@@ -56,7 +105,11 @@ class LocalWorkflowRunner:
         self._task_dependencies = {}
         self._task_dep_specs = {}
         self._task_run_if = {}
+        self._task_kind = {}
+        self._condition_task = {}
+        self._task_insertion_order = []
         self._notebook_insertion_order = []
+        self._task_base_params = {}
         self._notebook_base_params = {}
         self.task_statuses = {}
         self.task_results = {}
@@ -74,28 +127,53 @@ class LocalWorkflowRunner:
             task_key = task.get("task_key")
             _require(task_key, "Each task must include a non-empty 'task_key'")
             _require(
-                task_key not in self._task_to_notebook,
+                task_key not in self._task_kind,
                 f"Duplicate task_key found: {task_key}",
             )
 
             notebook_task = task.get("notebook_task")
+            condition_task = task.get("condition_task")
+            has_notebook = isinstance(notebook_task, dict)
+            has_condition = isinstance(condition_task, dict)
             _require(
-                isinstance(notebook_task, dict),
+                has_notebook or has_condition,
                 f"Task '{task_key}' is missing 'notebook_task'",
             )
-            notebook_name = self._extract_notebook_name(
-                notebook_task.get("notebook_path"), task_key
-            )
             _require(
-                notebook_name not in self._notebook_insertion_order,
-                f"Duplicate notebook name found: {notebook_name}",
+                not (has_notebook and has_condition),
+                f"Task '{task_key}' cannot mix 'notebook_task' and 'condition_task'",
             )
 
-            base_parameters = notebook_task.get("base_parameters", {})
-            _require(
-                isinstance(base_parameters, dict),
-                f"Task '{task_key}' has invalid 'base_parameters' format",
-            )
+            notebook_name = None
+            base_parameters = {}
+            if has_notebook:
+                notebook_name = self._extract_notebook_name(
+                    notebook_task.get("notebook_path"), task_key
+                )
+                _require(
+                    notebook_name not in self._notebook_insertion_order,
+                    f"Duplicate notebook name found: {notebook_name}",
+                )
+                base_parameters = notebook_task.get("base_parameters", {})
+                _require(
+                    isinstance(base_parameters, dict),
+                    f"Task '{task_key}' has invalid 'base_parameters' format",
+                )
+            else:
+                _require(
+                    condition_task.get("op"),
+                    f"Task '{task_key}' has invalid 'condition_task'",
+                )
+                op = str(condition_task.get("op")).upper()
+                _require(
+                    op in CONDITION_OPS,
+                    f"Unsupported condition op '{condition_task.get('op')}' on task '{task_key}'",
+                )
+                _require(
+                    "left" in condition_task and "right" in condition_task,
+                    f"Task '{task_key}' condition_task requires 'left' and 'right'",
+                )
+                condition_task = {**condition_task, "op": op}
 
             depends_on = task.get("depends_on", [])
             _require(
@@ -118,13 +196,18 @@ class LocalWorkflowRunner:
                 f"Unsupported run_if '{run_if}' on task '{task_key}'",
             )
 
+            self._task_kind[task_key] = "condition" if has_condition else "notebook"
+            self._condition_task[task_key] = condition_task if has_condition else None
             self._task_to_notebook[task_key] = notebook_name
-            self._notebook_to_task[notebook_name] = task_key
+            if notebook_name is not None:
+                self._notebook_to_task[notebook_name] = task_key
+                self._notebook_insertion_order.append(notebook_name)
+                self._notebook_base_params[notebook_name] = base_parameters
             self._task_dependencies[task_key] = dependency_keys
             self._task_dep_specs[task_key] = dep_specs
             self._task_run_if[task_key] = run_if.upper()
-            self._notebook_insertion_order.append(notebook_name)
-            self._notebook_base_params[notebook_name] = base_parameters
+            self._task_insertion_order.append(task_key)
+            self._task_base_params[task_key] = base_parameters
 
     def _extract_notebook_name(self, notebook_path, task_key):
         _require(
@@ -136,18 +219,16 @@ class LocalWorkflowRunner:
         return notebook_name
 
     def _build_graphs(self):
-        successors = {name: set() for name in self._notebook_insertion_order}
-        predecessors = {name: set() for name in self._notebook_insertion_order}
+        successors = {key: set() for key in self._task_insertion_order}
+        predecessors = {key: set() for key in self._task_insertion_order}
         for task_key, dependency_keys in self._task_dependencies.items():
-            current = self._task_to_notebook[task_key]
             for dependency_key in dependency_keys:
                 _require(
-                    dependency_key in self._task_to_notebook,
+                    dependency_key in self._task_kind,
                     f"Task '{task_key}' depends on unknown task '{dependency_key}'",
                 )
-                dependency = self._task_to_notebook[dependency_key]
-                successors[dependency].add(current)
-                predecessors[current].add(dependency)
+                successors[dependency_key].add(task_key)
+                predecessors[task_key].add(dependency_key)
         return successors, predecessors
 
     def _outcome_matches(self, dep_key, status, outcome):
@@ -174,11 +255,35 @@ class LocalWorkflowRunner:
         statuses = [self.task_statuses[dep_key] for dep_key, _ in specs]
         return _matches_run_if(self._task_run_if[task_key], statuses)
 
+    def _resolve_operand(self, raw, store):
+        if raw is None:
+            return ""
+        if not isinstance(raw, str):
+            return str(raw)
+        text = raw.strip()
+        match = TASK_VALUE_RE.match(text)
+        if match:
+            return store.get(taskKey=match.group(1), key=match.group(2).strip())
+        match = JOB_PARAM_RE.match(text)
+        if match:
+            key = match.group(1).strip()
+            if key not in os.environ:
+                raise ValueError(f"Job parameter '{key}' not found")
+            return os.environ[key]
+        return raw
+
+    def _evaluate_condition(self, task_key, store):
+        spec = self._condition_task[task_key]
+        left = self._resolve_operand(spec.get("left"), store)
+        right = self._resolve_operand(spec.get("right"), store)
+        matched = _compare_condition(spec["op"], left, right)
+        return "true" if matched else "false"
+
     def format_dag(self):
         lines = []
-        for notebook_name in self._notebook_insertion_order:
-            outgoing = sorted(self.dag.get(notebook_name, set()))
-            lines.append(f"- {notebook_name} -> [{', '.join(outgoing)}]")
+        for task_key in self._task_insertion_order:
+            outgoing = sorted(self.dag.get(task_key, set()))
+            lines.append(f"- {task_key} -> [{', '.join(outgoing)}]")
         lines.append("Execution order:")
         lines.append(" -> ".join(self.execution_order))
         return "\n".join(lines)
@@ -208,9 +313,25 @@ class LocalWorkflowRunner:
                 else:
                     os.environ[key] = original
 
+    def _run_notebook_task(self, task_key, executor, store, execution_globals):
+        notebook_name = self._task_to_notebook[task_key]
+        notebook_path = os.path.join(self.source_dir, f"{notebook_name}.py")
+        if not os.path.exists(notebook_path):
+            raise FileNotFoundError(f"Notebook file not found: {notebook_path}")
+        from testbricks.dbutils.widgets import argument_override_context
+
+        base_params = self._task_base_params.get(task_key, {})
+        with (
+            self._seeded_env(base_params),
+            argument_override_context(base_params.keys()),
+            store.current_task(task_key),
+        ):
+            for param_key, param_value in base_params.items():
+                store.set(key=param_key, value=param_value, update_env=False)
+            executor.exec_file(notebook_path, execution_globals, top_level=True)
+
     def run_workflow(self, extra_globals=None):
         from testbricks.dbutils import configure, dbutils
-        from testbricks.dbutils.widgets import argument_override_context
 
         configure(self.base_path, source_dir=self.source_dir)
         executor = dbutils.executor
@@ -223,33 +344,26 @@ class LocalWorkflowRunner:
         self.task_statuses = {}
         self.task_results = {}
         first_error = None
-        for notebook_name in self.execution_order:
-            task_key = self._notebook_to_task[notebook_name]
+        for task_key in self.execution_order:
             if not self._is_eligible(task_key):
                 self.task_statuses[task_key] = "SKIPPED"
-                print(f"Skipping task '{task_key}' ({notebook_name}): run_if not met")
+                print(f"Skipping task '{task_key}': run_if not met")
                 continue
-            notebook_path = os.path.join(self.source_dir, f"{notebook_name}.py")
-            if not os.path.exists(notebook_path):
-                raise FileNotFoundError(f"Notebook file not found: {notebook_path}")
-            base_params = self._notebook_base_params.get(notebook_name, {})
-            with (
-                self._seeded_env(base_params),
-                argument_override_context(base_params.keys()),
-                store.current_task(task_key),
-            ):
-                for param_key, param_value in base_params.items():
-                    store.set(key=param_key, value=param_value, update_env=False)
-                try:
-                    executor.exec_file(
-                        notebook_path, execution_globals, top_level=True
+            try:
+                if self._task_kind[task_key] == "condition":
+                    self.task_results[task_key] = self._evaluate_condition(
+                        task_key, store
                     )
-                except Exception as exc:
-                    self.task_statuses[task_key] = "FAILED"
-                    if first_error is None:
-                        first_error = exc
-                    print(f"Task '{task_key}' failed: {exc}")
-                    continue
+                else:
+                    self._run_notebook_task(
+                        task_key, executor, store, execution_globals
+                    )
+            except Exception as exc:
+                self.task_statuses[task_key] = "FAILED"
+                if first_error is None:
+                    first_error = exc
+                print(f"Task '{task_key}' failed: {exc}")
+                continue
             self.task_statuses[task_key] = "SUCCESS"
         if first_error is not None:
             raise first_error

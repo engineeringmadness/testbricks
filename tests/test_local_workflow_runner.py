@@ -19,26 +19,26 @@ class TestSampleWorkflowDAG:
     def test_builds_dag_using_notebook_names(self):
         runner = LocalWorkflowRunner("src", WORKFLOW_SAMPLE_PATH, DEFAULT_BASE_PATH)
 
-        assert runner.dag["auxillary_dims"] == {"data_quality"}
-        assert runner.dag["reviews_fact"] == {"data_quality"}
-        assert runner.dag["data_quality"] == {"semantic_layer"}
+        assert runner.dag["dimensions"] == {"quality_checks"}
+        assert runner.dag["reviews_fact"] == {"quality_checks"}
+        assert runner.dag["quality_checks"] == {"semantic_layer"}
         assert runner.dag["semantic_layer"] == set()
 
     def test_execution_order_respects_dependencies(self):
         runner = LocalWorkflowRunner("src", WORKFLOW_SAMPLE_PATH, DEFAULT_BASE_PATH)
         order = runner.execution_order
 
-        assert order.index("data_quality") > order.index("auxillary_dims")
-        assert order.index("data_quality") > order.index("reviews_fact")
-        assert order.index("semantic_layer") > order.index("data_quality")
+        assert order.index("quality_checks") > order.index("dimensions")
+        assert order.index("quality_checks") > order.index("reviews_fact")
+        assert order.index("semantic_layer") > order.index("quality_checks")
 
     def test_format_dag_includes_nodes_and_execution_order(self):
         runner = LocalWorkflowRunner("src", WORKFLOW_SAMPLE_PATH, DEFAULT_BASE_PATH)
         formatted = runner.format_dag()
 
-        assert "- auxillary_dims -> [data_quality]" in formatted
-        assert "- reviews_fact -> [data_quality]" in formatted
-        assert "- data_quality -> [semantic_layer]" in formatted
+        assert "- dimensions -> [quality_checks]" in formatted
+        assert "- reviews_fact -> [quality_checks]" in formatted
+        assert "- quality_checks -> [semantic_layer]" in formatted
         assert "- semantic_layer -> []" in formatted
         assert "Execution order:" in formatted
         assert " -> ".join(runner.execution_order) in formatted
@@ -68,7 +68,7 @@ class TestNotebookNameExtraction:
 
         runner = LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
         assert runner._task_to_notebook["task_1"] == expected
-        assert runner.execution_order == [expected]
+        assert runner.execution_order == ["task_1"]
 
 
 class TestWorkflowExecution:
@@ -533,6 +533,158 @@ class TestRunIfConditions:
         workflow_path = tmp_path / "workflow.json"
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
         with pytest.raises(ValueError, match="Unsupported run_if"):
+            LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
+
+
+class TestConditionTasks:
+    def _runner(self, tmp_path, tasks, notebooks):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        _write_notebooks(source_dir, notebooks)
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
+        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+
+    def test_true_branch_runs_and_false_branch_skipped(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "producer",
+                    "notebook_task": {"notebook_path": "/Workspace/any/producer"},
+                },
+                {
+                    "task_key": "check",
+                    "depends_on": [{"task_key": "producer"}],
+                    "condition_task": {
+                        "op": "EQUAL_TO",
+                        "left": "{{tasks.producer.values.region}}",
+                        "right": "eu",
+                    },
+                },
+                {
+                    "task_key": "on_true",
+                    "depends_on": [{"task_key": "check", "outcome": "true"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/on_true"},
+                },
+                {
+                    "task_key": "on_false",
+                    "depends_on": [{"task_key": "check", "outcome": "false"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/on_false"},
+                },
+            ],
+            {
+                "producer": 'dbutils.jobs.taskValues.set(key="region", value="eu")\n',
+                "on_true": f'with open(r"{log_file}", "a") as f: f.write("true\\n")\n',
+                "on_false": f'with open(r"{log_file}", "a") as f: f.write("false\\n")\n',
+            },
+        )
+        runner.run_workflow()
+        assert runner.task_statuses["check"] == "SUCCESS"
+        assert runner.task_results["check"] == "true"
+        assert runner.task_statuses["on_true"] == "SUCCESS"
+        assert runner.task_statuses["on_false"] == "SKIPPED"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["true"]
+
+    def test_false_branch_runs_when_condition_fails(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "producer",
+                    "notebook_task": {"notebook_path": "/Workspace/any/producer"},
+                },
+                {
+                    "task_key": "check",
+                    "depends_on": [{"task_key": "producer"}],
+                    "condition_task": {
+                        "op": "EQUAL",
+                        "left": "{{tasks.producer.values.region}}",
+                        "right": "eu",
+                    },
+                },
+                {
+                    "task_key": "on_true",
+                    "depends_on": [{"task_key": "check", "outcome": "true"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/on_true"},
+                },
+                {
+                    "task_key": "on_false",
+                    "depends_on": [{"task_key": "check", "outcome": "false"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/on_false"},
+                },
+            ],
+            {
+                "producer": 'dbutils.jobs.taskValues.set(key="region", value="us")\n',
+                "on_true": f'with open(r"{log_file}", "a") as f: f.write("true\\n")\n',
+                "on_false": f'with open(r"{log_file}", "a") as f: f.write("false\\n")\n',
+            },
+        )
+        runner.run_workflow()
+        assert runner.task_results["check"] == "false"
+        assert runner.task_statuses["on_true"] == "SKIPPED"
+        assert runner.task_statuses["on_false"] == "SUCCESS"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["false"]
+
+    def test_greater_than_compares_numerically(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "producer",
+                    "notebook_task": {"notebook_path": "/Workspace/any/producer"},
+                },
+                {
+                    "task_key": "check",
+                    "depends_on": [{"task_key": "producer"}],
+                    "condition_task": {
+                        "op": "GREATER_THAN",
+                        "left": "{{tasks.producer.values.count}}",
+                        "right": "10",
+                    },
+                },
+                {
+                    "task_key": "on_true",
+                    "depends_on": [{"task_key": "check", "outcome": "true"}],
+                    "notebook_task": {"notebook_path": "/Workspace/any/on_true"},
+                },
+            ],
+            {
+                "producer": 'dbutils.jobs.taskValues.set(key="count", value="12")\n',
+                "on_true": f'with open(r"{log_file}", "a") as f: f.write("true\\n")\n',
+            },
+        )
+        runner.run_workflow()
+        assert runner.task_results["check"] == "true"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["true"]
+
+    def test_condition_task_without_notebook_file(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "check",
+                    "condition_task": {
+                        "op": "EQUAL_TO",
+                        "left": "a",
+                        "right": "a",
+                    },
+                }
+            ],
+            {},
+        )
+        runner.run_workflow()
+        assert runner.task_statuses["check"] == "SUCCESS"
+        assert runner.task_results["check"] == "true"
+
+    def test_missing_task_type_still_raises(self, tmp_path):
+        workflow = {"tasks": [{"task_key": "t1"}]}
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+        with pytest.raises(ValueError, match="is missing 'notebook_task'"):
             LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
 
