@@ -688,6 +688,145 @@ class TestConditionTasks:
             LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
 
+class TestForEachTasks:
+    def _runner(self, tmp_path, tasks, notebooks):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        _write_notebooks(source_dir, notebooks)
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
+        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+
+    def test_runs_nested_notebook_once_per_input(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "loop",
+                    "for_each_task": {
+                        "inputs": '["a", "b", "c"]',
+                        "concurrency": 1,
+                        "task": {
+                            "task_key": "process",
+                            "notebook_task": {
+                                "notebook_path": "/Workspace/any/process",
+                                "base_parameters": {"item": "{{input}}"},
+                            },
+                        },
+                    },
+                }
+            ],
+            {
+                "process": (
+                    "import os\n"
+                    f'with open(r"{log_file}", "a") as f: f.write(os.environ["item"] + "\\n")\n'
+                )
+            },
+        )
+        runner.run_workflow()
+        assert runner.task_statuses["loop"] == "SUCCESS"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["a", "b", "c"]
+
+    def test_inputs_from_task_values_json_list(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "producer",
+                    "notebook_task": {"notebook_path": "/Workspace/any/producer"},
+                },
+                {
+                    "task_key": "loop",
+                    "depends_on": [{"task_key": "producer"}],
+                    "for_each_task": {
+                        "inputs": "{{tasks.producer.values.items}}",
+                        "task": {
+                            "task_key": "process",
+                            "notebook_task": {
+                                "notebook_path": "/Workspace/any/process",
+                                "base_parameters": {"item": "{{input}}"},
+                            },
+                        },
+                    },
+                },
+            ],
+            {
+                "producer": 'dbutils.jobs.taskValues.set(key="items", value=\'["x", "y"]\')\n',
+                "process": (
+                    "import os\n"
+                    f'with open(r"{log_file}", "a") as f: f.write(os.environ["item"] + "\\n")\n'
+                ),
+            },
+        )
+        runner.run_workflow()
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["x", "y"]
+
+    def test_child_failure_fails_for_each_task(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "loop",
+                    "for_each_task": {
+                        "inputs": '["ok", "bad", "later"]',
+                        "task": {
+                            "task_key": "process",
+                            "notebook_task": {
+                                "notebook_path": "/Workspace/any/process",
+                                "base_parameters": {"item": "{{input}}"},
+                            },
+                        },
+                    },
+                }
+            ],
+            {
+                "process": (
+                    "import os\n"
+                    "item = os.environ['item']\n"
+                    f'with open(r"{log_file}", "a") as f: f.write(item + "\\n")\n'
+                    "if item == 'bad':\n"
+                    "    raise RuntimeError('bad item')\n"
+                )
+            },
+        )
+        with pytest.raises(RuntimeError, match="bad item"):
+            runner.run_workflow()
+        assert runner.task_statuses["loop"] == "FAILED"
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["ok", "bad"]
+
+    def test_literal_list_inputs(self, tmp_path):
+        log_file = tmp_path / "execution.log"
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "loop",
+                    "for_each_task": {
+                        "inputs": [1, 2],
+                        "task": {
+                            "task_key": "process",
+                            "notebook_task": {
+                                "notebook_path": "/Workspace/any/process",
+                                "base_parameters": {"item": "{{input}}"},
+                            },
+                        },
+                    },
+                }
+            ],
+            {
+                "process": (
+                    "import os\n"
+                    f'with open(r"{log_file}", "a") as f: f.write(os.environ["item"] + "\\n")\n'
+                )
+            },
+        )
+        runner.run_workflow()
+        assert log_file.read_text(encoding="utf-8").splitlines() == ["1", "2"]
+
+
 class TestWorkflowValidation:
     def test_missing_tasks_raises(self, tmp_path):
         workflow_path = tmp_path / "workflow.json"

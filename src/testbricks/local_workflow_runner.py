@@ -107,6 +107,7 @@ class LocalWorkflowRunner:
         self._task_run_if = {}
         self._task_kind = {}
         self._condition_task = {}
+        self._for_each_task = {}
         self._task_insertion_order = []
         self._notebook_insertion_order = []
         self._task_base_params = {}
@@ -133,15 +134,17 @@ class LocalWorkflowRunner:
 
             notebook_task = task.get("notebook_task")
             condition_task = task.get("condition_task")
+            for_each_task = task.get("for_each_task")
             has_notebook = isinstance(notebook_task, dict)
             has_condition = isinstance(condition_task, dict)
+            has_for_each = isinstance(for_each_task, dict)
             _require(
-                has_notebook or has_condition,
+                has_notebook or has_condition or has_for_each,
                 f"Task '{task_key}' is missing 'notebook_task'",
             )
             _require(
-                not (has_notebook and has_condition),
-                f"Task '{task_key}' cannot mix 'notebook_task' and 'condition_task'",
+                [has_notebook, has_condition, has_for_each].count(True) == 1,
+                f"Task '{task_key}' cannot mix notebook, condition, and for_each tasks",
             )
 
             notebook_name = None
@@ -159,7 +162,7 @@ class LocalWorkflowRunner:
                     isinstance(base_parameters, dict),
                     f"Task '{task_key}' has invalid 'base_parameters' format",
                 )
-            else:
+            elif has_condition:
                 _require(
                     condition_task.get("op"),
                     f"Task '{task_key}' has invalid 'condition_task'",
@@ -174,6 +177,29 @@ class LocalWorkflowRunner:
                     f"Task '{task_key}' condition_task requires 'left' and 'right'",
                 )
                 condition_task = {**condition_task, "op": op}
+            else:
+                nested = for_each_task.get("task")
+                _require(
+                    isinstance(nested, dict),
+                    f"Task '{task_key}' for_each_task requires a nested 'task'",
+                )
+                nested_notebook = nested.get("notebook_task")
+                _require(
+                    isinstance(nested_notebook, dict),
+                    f"Task '{task_key}' for_each nested task is missing 'notebook_task'",
+                )
+                self._extract_notebook_name(
+                    nested_notebook.get("notebook_path"), task_key
+                )
+                nested_params = nested_notebook.get("base_parameters", {})
+                _require(
+                    isinstance(nested_params, dict),
+                    f"Task '{task_key}' has invalid nested 'base_parameters' format",
+                )
+                _require(
+                    "inputs" in for_each_task,
+                    f"Task '{task_key}' for_each_task requires 'inputs'",
+                )
 
             depends_on = task.get("depends_on", [])
             _require(
@@ -196,8 +222,15 @@ class LocalWorkflowRunner:
                 f"Unsupported run_if '{run_if}' on task '{task_key}'",
             )
 
-            self._task_kind[task_key] = "condition" if has_condition else "notebook"
+            if has_condition:
+                kind = "condition"
+            elif has_for_each:
+                kind = "for_each"
+            else:
+                kind = "notebook"
+            self._task_kind[task_key] = kind
             self._condition_task[task_key] = condition_task if has_condition else None
+            self._for_each_task[task_key] = for_each_task if has_for_each else None
             self._task_to_notebook[task_key] = notebook_name
             if notebook_name is not None:
                 self._notebook_to_task[notebook_name] = task_key
@@ -330,6 +363,78 @@ class LocalWorkflowRunner:
                 store.set(key=param_key, value=param_value, update_env=False)
             executor.exec_file(notebook_path, execution_globals, top_level=True)
 
+    def _input_as_str(self, item):
+        if isinstance(item, (dict, list)):
+            return json.dumps(item)
+        return str(item)
+
+    def _render_input_template(self, value, item, index):
+        if not isinstance(value, str):
+            return str(value)
+        text = value.strip()
+        if re.match(r"^\{\{\s*input\s*\}\}$", text):
+            return self._input_as_str(item)
+        field = re.match(r"^\{\{\s*input\.([^}]+?)\s*\}\}$", text)
+        if field:
+            key = field.group(1).strip()
+            if isinstance(item, dict):
+                return self._input_as_str(item.get(key))
+            raise ValueError(f"for_each input is not an object; cannot read '{key}'")
+        if "{{input}}" in value:
+            return value.replace("{{input}}", self._input_as_str(item))
+        return value
+
+    def _resolve_for_each_inputs(self, raw, store):
+        if isinstance(raw, list):
+            return raw
+        if not isinstance(raw, str):
+            raise ValueError(f"for_each inputs must be a JSON list, got {raw!r}")
+        text = raw.strip()
+        match = TASK_VALUE_RE.match(text)
+        if match:
+            text = store.get(taskKey=match.group(1), key=match.group(2).strip())
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"for_each inputs must be a JSON list: {raw!r}") from exc
+        if not isinstance(parsed, list):
+            raise ValueError(f"for_each inputs must be a JSON list: {raw!r}")
+        return parsed
+
+    def _run_for_each_task(self, task_key, executor, store, extra_globals):
+        spec = self._for_each_task[task_key]
+        inputs = self._resolve_for_each_inputs(spec.get("inputs"), store)
+        nested = spec["task"]
+        notebook_task = nested["notebook_task"]
+        notebook_name = self._extract_notebook_name(
+            notebook_task.get("notebook_path"), task_key
+        )
+        nested_key = nested.get("task_key") or task_key
+        base_parameters = notebook_task.get("base_parameters", {}) or {}
+        caller = os.path.join(self.source_dir, "_workflow.py")
+        for index, item in enumerate(inputs):
+            params = {
+                key: self._render_input_template(value, item, index)
+                for key, value in base_parameters.items()
+            }
+            saved_env = {key: os.environ.get(key) for key in params}
+            try:
+                with (
+                    store.current_task(nested_key),
+                    executor.caller_context(caller),
+                ):
+                    executor.run_isolated(
+                        f"/Workspace/{notebook_name}",
+                        arguments=params,
+                        extra=extra_globals,
+                    )
+            finally:
+                for key, original in saved_env.items():
+                    if original is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = original
+
     def run_workflow(self, extra_globals=None):
         from testbricks.dbutils import configure, dbutils
 
@@ -350,9 +455,14 @@ class LocalWorkflowRunner:
                 print(f"Skipping task '{task_key}': run_if not met")
                 continue
             try:
-                if self._task_kind[task_key] == "condition":
+                kind = self._task_kind[task_key]
+                if kind == "condition":
                     self.task_results[task_key] = self._evaluate_condition(
                         task_key, store
+                    )
+                elif kind == "for_each":
+                    self._run_for_each_task(
+                        task_key, executor, store, extra_globals
                     )
                 else:
                     self._run_notebook_task(
