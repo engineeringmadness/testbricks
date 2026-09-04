@@ -84,6 +84,23 @@ class DataFrameWriter(_IoBuilder):
     def _replace_where(self):
         return self._options.get("replaceWhere") or self._options.get("replacewhere")
 
+    def _csv_options(self):
+        return {
+            key: value
+            for key, value in self._options.items()
+            if key.lower()
+            in {
+                "delimiter",
+                "sep",
+                "quote",
+                "escape",
+                "nullvalue",
+                "dateformat",
+                "timestampformat",
+                "header",
+            }
+        }
+
     def saveAsTable(self, table_name):
         ident = TableIdentifier.parse(table_name)
         self._validate_partition_columns()
@@ -93,6 +110,7 @@ class DataFrameWriter(_IoBuilder):
             mode=self._mode,
             header=self._header_flag(),
             replace_where=self._replace_where(),
+            csv_options=self._csv_options(),
         )
 
     def insertInto(self, table_name, overwrite=False):
@@ -115,6 +133,7 @@ class DataFrameWriter(_IoBuilder):
             mode=mode,
             header=self._header_flag(),
             replace_where=self._replace_where(),
+            csv_options=self._csv_options(),
         )
 
 

@@ -365,6 +365,62 @@ class TestPartitionByAndReplaceWhere:
             ).saveAsTable("silver.people")
 
 
+class TestCsvWriteOptions:
+    def test_save_as_table_pipe_delimiter_round_trips_on_read(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30), ("Bob", 25)], ["Name", "Age"])
+        df.write.mode("overwrite").option("delimiter", "|").saveAsTable("default.people")
+
+        csv_path = os.path.join(temp_spark._base_path, "default", "people.csv")
+        with open(csv_path, encoding="utf-8") as handle:
+            contents = handle.read()
+        assert "Alice|30" in contents
+
+        result = temp_spark.read.table("default.people")
+        assert result.count() == 2
+        assert {row.Name for row in result.collect()} == {"Alice", "Bob"}
+
+    def test_save_as_table_null_value_round_trips(self, temp_spark):
+        df = temp_spark.createDataFrame([(None, 1), ("Alice", 2)], ["Name", "Age"])
+        df.write.mode("overwrite").option("nullValue", "NA").saveAsTable("default.people")
+
+        csv_path = os.path.join(temp_spark._base_path, "default", "people.csv")
+        with open(csv_path, encoding="utf-8") as handle:
+            contents = handle.read()
+        assert "NA" in contents
+
+        result = temp_spark.read.table("default.people")
+        names = [row.Name for row in result.collect()]
+        assert None in names
+        assert "Alice" in names
+
+    def test_save_as_table_date_format(self, temp_spark):
+        from datetime import date
+
+        df = temp_spark.createDataFrame([(date(2026, 9, 1),)], ["dt"])
+        df.write.mode("overwrite").option("dateFormat", "dd/MM/yyyy").saveAsTable(
+            "default.dates"
+        )
+        csv_path = os.path.join(temp_spark._base_path, "default", "dates.csv")
+        with open(csv_path, encoding="utf-8") as handle:
+            contents = handle.read()
+        assert "01/09/2026" in contents
+
+        result = temp_spark.read.table("default.dates")
+        assert result.count() == 1
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Native Spark CSV writer requires Hadoop winutils on Windows")
+    def test_csv_path_write_honors_delimiter(self, temp_spark):
+        df = _make_df(temp_spark, [(1, "a")], ["id", "name"])
+        df.write.mode("overwrite").option("delimiter", "|").option("header", "true").csv(
+            "output/pipe"
+        )
+        output_dir = os.path.join(temp_spark._base_path, "output", "pipe")
+        csv_files = [f for f in os.listdir(output_dir) if f.endswith(".csv")]
+        with open(os.path.join(output_dir, csv_files[0]), encoding="utf-8") as handle:
+            body = handle.read()
+        assert "|" in body
+
+
 class TestWriteTransformedTable:
     def test_write_transformed_table_creates_expected_csv(self, spark):
         # Uses the shared spark fixture because the source table lives in tests/data.
