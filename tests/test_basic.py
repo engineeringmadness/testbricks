@@ -314,6 +314,57 @@ class TestInsertInto:
             df.write.insertInto("default.missing")
 
 
+class TestPartitionByAndReplaceWhere:
+    def test_partition_by_unknown_column_raises(self, temp_spark):
+        from pyspark.sql.utils import AnalysisException
+
+        df = _make_df(temp_spark, [("Alice", 30, "2024-01-01")], ["Name", "Age", "dt"])
+        with pytest.raises(AnalysisException, match="partitionBy columns"):
+            df.write.mode("overwrite").partitionBy("missing").saveAsTable("silver.people")
+
+    def test_replace_where_overwrites_matching_rows_only(self, temp_spark):
+        first = _make_df(
+            temp_spark,
+            [("Alice", "2026-09-01"), ("Bob", "2026-09-02")],
+            ["Name", "dt"],
+        )
+        first.write.mode("overwrite").partitionBy("dt").saveAsTable("silver.people")
+
+        replacement = _make_df(
+            temp_spark,
+            [("Carol", "2026-09-01")],
+            ["Name", "dt"],
+        )
+        replacement.write.format("delta").mode("overwrite").option(
+            "replaceWhere", "dt = '2026-09-01'"
+        ).partitionBy("dt").saveAsTable("silver.people")
+
+        result = temp_spark.sql("SELECT * FROM silver.people")
+        rows = {(row.Name, row.dt) for row in result.collect()}
+        assert rows == {("Carol", "2026-09-01"), ("Bob", "2026-09-02")}
+
+    def test_replace_where_unparsable_predicate_raises(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", "2026-09-01")], ["Name", "dt"])
+        first.write.mode("overwrite").saveAsTable("silver.people")
+
+        replacement = _make_df(temp_spark, [("Carol", "2026-09-01")], ["Name", "dt"])
+        with pytest.raises(ValueError, match="Unparsable replaceWhere predicate"):
+            replacement.write.mode("overwrite").option(
+                "replaceWhere", "not a valid predicate !!!"
+            ).saveAsTable("silver.people")
+
+        assert temp_spark.sql("SELECT * FROM silver.people").collect()[0].Name == "Alice"
+
+    def test_replace_where_requires_overwrite_mode(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", "2026-09-01")], ["Name", "dt"])
+        first.write.mode("overwrite").saveAsTable("silver.people")
+        replacement = _make_df(temp_spark, [("Carol", "2026-09-01")], ["Name", "dt"])
+        with pytest.raises(ValueError, match="replaceWhere"):
+            replacement.write.mode("append").option(
+                "replaceWhere", "dt = '2026-09-01'"
+            ).saveAsTable("silver.people")
+
+
 class TestWriteTransformedTable:
     def test_write_transformed_table_creates_expected_csv(self, spark):
         # Uses the shared spark fixture because the source table lives in tests/data.

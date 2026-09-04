@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Mapping, Optional
@@ -82,6 +83,7 @@ class TableCatalog:
         dataframe: DataFrame,
         mode: Optional[str] = None,
         header: bool = True,
+        replace_where: Optional[str] = None,
     ) -> None:
         self.ensure_schema_dir(ident)
         csv_path = self.path_for(ident)
@@ -98,7 +100,18 @@ class TableCatalog:
 
         new_pdf = dataframe.toPandas()
 
-        if save_mode in _APPEND_MODES and exists:
+        if replace_where:
+            if save_mode != "overwrite":
+                raise ValueError(
+                    "option('replaceWhere') requires mode('overwrite'); "
+                    f"got mode '{mode}'."
+                )
+            if exists:
+                existing_pdf = pd.read_csv(csv_path)
+                remaining = _apply_replace_where(existing_pdf, replace_where)
+                aligned = _align_columns_for_concat(remaining, new_pdf)
+                new_pdf = pd.concat(aligned, ignore_index=True)
+        elif save_mode in _APPEND_MODES and exists:
             existing_pdf = pd.read_csv(csv_path)
             if set(existing_pdf.columns) != set(new_pdf.columns):
                 raise SchemaMismatchError(
@@ -145,3 +158,29 @@ def _normalize_save_mode(mode: Optional[str]) -> str:
         f"Unknown save mode '{mode}'. Expected overwrite, append, ignore, "
         "error, or errorIfExists."
     )
+
+
+def _spark_predicate_to_pandas_query(predicate: str) -> str:
+    query = predicate.strip()
+    query = query.replace("`", "")
+    query = re.sub(r"\bAND\b", "and", query, flags=re.IGNORECASE)
+    query = re.sub(r"\bOR\b", "or", query, flags=re.IGNORECASE)
+    query = re.sub(r"\bNOT\b", "not", query, flags=re.IGNORECASE)
+    query = re.sub(r"(?<![<>!=])=(?!=)", "==", query)
+    return query
+
+
+def _apply_replace_where(existing_pdf: pd.DataFrame, predicate: str) -> pd.DataFrame:
+    query = _spark_predicate_to_pandas_query(predicate)
+    try:
+        matching = existing_pdf.query(query)
+    except Exception as exc:
+        raise ValueError(
+            f"Unparsable replaceWhere predicate: {predicate!r}"
+        ) from exc
+    return existing_pdf.drop(matching.index)
+
+
+def _align_columns_for_concat(left: pd.DataFrame, right: pd.DataFrame) -> list[pd.DataFrame]:
+    columns = list(dict.fromkeys(list(left.columns) + list(right.columns)))
+    return [left.reindex(columns=columns), right.reindex(columns=columns)]

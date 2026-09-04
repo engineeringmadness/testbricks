@@ -46,7 +46,13 @@ class DataFrameWriter(_IoBuilder):
         self._partition_by = ()
 
     def partitionBy(self, *cols):
-        self._partition_by = cols
+        flattened = []
+        for col in cols:
+            if isinstance(col, (list, tuple)):
+                flattened.extend(col)
+            else:
+                flattened.append(col)
+        self._partition_by = tuple(flattened)
         return self
 
     def mode(self, save_mode):
@@ -61,19 +67,38 @@ class DataFrameWriter(_IoBuilder):
             writer = writer.option(key, value)
         writer.csv(self._spark._get_full_path(path))
 
+    def _validate_partition_columns(self):
+        if not self._partition_by:
+            return
+        available = list(self._dataframe.columns)
+        missing = [col for col in self._partition_by if col not in available]
+        if missing:
+            raise AnalysisException(
+                f"partitionBy columns {missing} do not exist in the DataFrame. "
+                f"Available columns: {available}"
+            )
+
+    def _header_flag(self):
+        return str(self._options.get("header", "true")).lower() == "true"
+
+    def _replace_where(self):
+        return self._options.get("replaceWhere") or self._options.get("replacewhere")
+
     def saveAsTable(self, table_name):
         ident = TableIdentifier.parse(table_name)
-        header = self._options.get("header", "true").lower() == "true"
+        self._validate_partition_columns()
         self._spark._catalog.save_dataframe(
             ident,
             self._dataframe,
             mode=self._mode,
-            header=header,
+            header=self._header_flag(),
+            replace_where=self._replace_where(),
         )
 
     def insertInto(self, table_name, overwrite=False):
         """Append or overwrite rows in an existing table (Spark DataFrameWriter.insertInto)."""
         ident = TableIdentifier.parse(table_name)
+        self._validate_partition_columns()
         if not self._spark._catalog.exists(ident):
             raise AnalysisException(
                 f"[TABLE_OR_VIEW_NOT_FOUND] The table or view {ident} cannot be found. "
@@ -84,12 +109,12 @@ class DataFrameWriter(_IoBuilder):
             mode = "overwrite"
         else:
             mode = "append"
-        header = self._options.get("header", "true").lower() == "true"
         self._spark._catalog.save_dataframe(
             ident,
             self._dataframe,
             mode=mode,
-            header=header,
+            header=self._header_flag(),
+            replace_where=self._replace_where(),
         )
 
 
