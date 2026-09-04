@@ -84,5 +84,5 @@ df.write.mode("overwrite").saveAsTable("silver.customers_enriched")
 
 ## Key Modules
 1. `SparkProxy` - A Spark proxy that manipulates incoming Delta table reads and writes and redirects them to interactions with CSV files stored locally
-2. `LocalWorkflowRunner` - A notebook orchestrator that takes the notebook .py files as defined in a Databricks Workflow JSON file and executes them as per the DAG definition. Databricks comment magics `%run` and `%sh` (`# %sh` / `# MAGIC %sh`, including `%sh -e`) work in those notebooks.
-3. `dbutils` - A drop in replacement for Databricks `dbutils`. Supports `fs`, `widgets`, and `notebook` (`exit` / `%run`).
+2. `LocalWorkflowRunner` - A notebook orchestrator that takes the notebook .py files as defined in a Databricks Workflow JSON file and executes them as per the DAG definition. Databricks comment magics `%run`, `%sh` (`# %sh` / `# MAGIC %sh`, including `%sh -e`), and `%fs` (`# %fs` / `# MAGIC %fs`) work in those notebooks.
+3. `dbutils` - A drop in replacement for Databricks `dbutils`. Supports `fs` (`ls`/`put`/`cp`/`mv`/`rm`/`mkdirs`), `widgets` (including `combobox`/`multiselect`/`getAll`), `secrets` (`get`/`list`/`listScopes`), `notebook` (`exit` / `%run`), `library.restartPython`, and `data.summarize`.
