@@ -227,6 +227,50 @@ class TestWriteTable:
         with pytest.raises(ValueError, match="schema mismatch"):
             second.write.mode("append").saveAsTable("default.people")
 
+    def test_save_as_table_error_mode_raises_when_table_exists(self, temp_spark):
+        from pyspark.sql.utils import AnalysisException
+
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Bob", 25)], ["Name", "Age"])
+        with pytest.raises(AnalysisException, match="default.people"):
+            second.write.mode("error").saveAsTable("default.people")
+        with pytest.raises(AnalysisException, match="already exists"):
+            second.write.mode("errorIfExists").saveAsTable("default.people")
+
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.count() == 1
+        assert result.collect()[0].Name == "Alice"
+
+    def test_save_as_table_ignore_mode_skips_existing_table(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+        csv_path = os.path.join(temp_spark._base_path, "default", "people.csv")
+        mtime_before = os.path.getmtime(csv_path)
+
+        second = _make_df(temp_spark, [("Bob", 25)], ["Name", "Age"])
+        second.write.mode("ignore").saveAsTable("default.people")
+
+        assert os.path.getmtime(csv_path) == mtime_before
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.count() == 1
+        assert result.collect()[0].Name == "Alice"
+
+    def test_save_as_table_error_and_ignore_create_missing_table(self, temp_spark):
+        error_df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        error_df.write.mode("error").saveAsTable("default.from_error")
+        assert temp_spark.sql("SELECT * FROM default.from_error").count() == 1
+
+        ignore_df = _make_df(temp_spark, [("Bob", 25)], ["Name", "Age"])
+        ignore_df.write.mode("IGNORE").saveAsTable("default.from_ignore")
+        assert temp_spark.sql("SELECT * FROM default.from_ignore").count() == 1
+
+    def test_save_as_table_unknown_mode_raises(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        with pytest.raises(ValueError, match="Unknown save mode"):
+            df.write.mode("upsert").saveAsTable("default.people")
+
 
 class TestWriteTransformedTable:
     def test_write_transformed_table_creates_expected_csv(self, spark):

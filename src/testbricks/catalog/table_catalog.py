@@ -9,9 +9,15 @@ from typing import Mapping, Optional
 
 import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.utils import AnalysisException
 
 from .errors import SchemaMismatchError
 from .identifier import TableIdentifier
+
+_ERROR_MODES = frozenset({"error", "errorifexists"})
+_APPEND_MODES = frozenset({"append"})
+_OVERWRITE_MODES = frozenset({"overwrite"})
+_IGNORE_MODES = frozenset({"ignore"})
 
 _DEFAULT_READ_OPTIONS = {"header": "true", "inferSchema": "true"}
 
@@ -79,9 +85,20 @@ class TableCatalog:
     ) -> None:
         self.ensure_schema_dir(ident)
         csv_path = self.path_for(ident)
+        exists = os.path.exists(csv_path)
+        save_mode = _normalize_save_mode(mode)
+
+        if exists and save_mode in _ERROR_MODES:
+            raise AnalysisException(
+                f"[TABLE_OR_VIEW_ALREADY_EXISTS] Cannot create table or view "
+                f"{ident} because it already exists."
+            )
+        if exists and save_mode in _IGNORE_MODES:
+            return
+
         new_pdf = dataframe.toPandas()
 
-        if mode == "append" and os.path.exists(csv_path):
+        if save_mode in _APPEND_MODES and exists:
             existing_pdf = pd.read_csv(csv_path)
             if set(existing_pdf.columns) != set(new_pdf.columns):
                 raise SchemaMismatchError(
@@ -109,3 +126,22 @@ class TableCatalog:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
             raise
+
+
+def _normalize_save_mode(mode: Optional[str]) -> str:
+    """Map Spark save-mode aliases; default (None) overwrites, matching SparkProxy today."""
+    if mode is None:
+        return "overwrite"
+    normalized = str(mode).strip().lower()
+    if normalized in _ERROR_MODES:
+        return "error"
+    if normalized in _APPEND_MODES:
+        return "append"
+    if normalized in _OVERWRITE_MODES:
+        return "overwrite"
+    if normalized in _IGNORE_MODES:
+        return "ignore"
+    raise ValueError(
+        f"Unknown save mode '{mode}'. Expected overwrite, append, ignore, "
+        "error, or errorIfExists."
+    )
