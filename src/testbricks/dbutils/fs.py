@@ -1,9 +1,12 @@
 import os
 import shutil
+from collections import namedtuple
 
 from .errors import DbutilsError
 from .noop import NoOpModule
 from .path_resolver import PathResolver
+
+FileInfo = namedtuple("FileInfo", ["path", "name", "size", "modificationTime"])
 
 
 class FsMock:
@@ -61,6 +64,38 @@ class FsMock:
         return self._os_call(
             f"failed to create directory {path}",
             lambda: os.makedirs(target, exist_ok=True),
+        )
+
+    def ls(self, path):
+        target = self._resolve(path)
+        if not os.path.exists(target):
+            raise DbutilsError(f"cannot list missing directory: {path}")
+        if os.path.isfile(target):
+            return [self._file_info(path, os.path.basename(target.rstrip("/")), target)]
+
+        entries = []
+        for name in sorted(os.listdir(target)):
+            child = os.path.join(target, name)
+            display_path = self._join_display_path(path, name)
+            display_name = f"{name}/" if os.path.isdir(child) else name
+            entries.append(self._file_info(display_path, display_name, child))
+        return entries
+
+    @staticmethod
+    def _join_display_path(parent, name):
+        if parent.endswith("/"):
+            return f"{parent}{name}"
+        return f"{parent}/{name}"
+
+    @staticmethod
+    def _file_info(display_path, name, local_path):
+        size = 0 if os.path.isdir(local_path) else os.path.getsize(local_path)
+        mtime_ms = int(os.path.getmtime(local_path) * 1000)
+        return FileInfo(
+            path=display_path,
+            name=name,
+            size=size,
+            modificationTime=mtime_ms,
         )
 
     def _resolve(self, path):

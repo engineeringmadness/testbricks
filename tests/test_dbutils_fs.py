@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import pytest
 
 from testbricks.dbutils import DbutilsError, configure, dbutils
+from testbricks.dbutils.fs import FileInfo
 from testbricks.dbutils.path_resolver import PathResolver
 from testbricks.local_workflow_runner import LocalWorkflowRunner
 
@@ -141,10 +142,53 @@ class TestRm:
         assert not target.exists()
 
 
+class TestLs:
+    def test_ls_lists_files_and_directories(self, tmp_path):
+        configure(str(tmp_path))
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data" / "nested").mkdir()
+        file_path = tmp_path / "data" / "file.csv"
+        file_path.write_text("abc", encoding="utf-8")
+
+        entries = dbutils.fs.ls("dbfs:/data")
+        by_name = {entry.name: entry for entry in entries}
+
+        assert set(by_name) == {"file.csv", "nested/"}
+        file_info = by_name["file.csv"]
+        assert isinstance(file_info, FileInfo)
+        assert file_info.path == "dbfs:/data/file.csv"
+        assert file_info.size == 3
+        assert isinstance(file_info.modificationTime, int)
+        assert file_info.modificationTime >= 0
+
+        dir_info = by_name["nested/"]
+        assert dir_info.path == "dbfs:/data/nested"
+        assert dir_info.size == 0
+
+    def test_ls_file_returns_single_entry(self, tmp_path):
+        configure(str(tmp_path))
+        (tmp_path / "file.txt").write_text("x", encoding="utf-8")
+        entries = dbutils.fs.ls("dbfs:/file.txt")
+        assert len(entries) == 1
+        assert entries[0].name == "file.txt"
+        assert entries[0].path == "dbfs:/file.txt"
+        assert entries[0].size == 1
+
+    def test_ls_missing_directory_raises(self, tmp_path):
+        configure(str(tmp_path))
+        with pytest.raises(DbutilsError, match="cannot list missing directory"):
+            dbutils.fs.ls("dbfs:/does-not-exist")
+
+    def test_ls_empty_directory(self, tmp_path):
+        configure(str(tmp_path))
+        (tmp_path / "empty").mkdir()
+        assert dbutils.fs.ls("dbfs:/empty") == []
+
+
 class TestNoOpStubs:
     def test_unimplemented_fs_method_returns_true(self, tmp_path):
         configure(str(tmp_path))
-        assert dbutils.fs.ls("dbfs:/") is True
+        assert dbutils.fs.head("dbfs:/file.txt") is True
 
     def test_unimplemented_submodule_returns_true(self, tmp_path):
         configure(str(tmp_path))
