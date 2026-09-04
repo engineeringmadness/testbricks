@@ -111,6 +111,8 @@ class TableCatalog:
         header: bool = True,
         replace_where: Optional[str] = None,
         csv_options: Optional[Mapping[str, str]] = None,
+        overwrite_schema: bool = False,
+        merge_schema: bool = False,
     ) -> None:
         self.ensure_schema_dir(ident)
         csv_path = self.path_for(ident)
@@ -150,22 +152,45 @@ class TableCatalog:
                 remaining = _apply_replace_where(existing_pdf, replace_where)
                 aligned = _align_columns_for_concat(remaining, new_pdf)
                 new_pdf = pd.concat(aligned, ignore_index=True)
+        elif exists and save_mode == "overwrite":
+            existing_pdf = _pandas_read_csv(csv_path, stored or effective_options)
+            if _schema_incompatible(existing_pdf, new_pdf) and not overwrite_schema:
+                raise SchemaMismatchError(
+                    f"Cannot overwrite '{ident}' with an incompatible schema unless "
+                    "overwriteSchema=true. "
+                    f"Existing columns={list(existing_pdf.columns)}, "
+                    f"new columns={list(new_pdf.columns)}"
+                )
         elif save_mode in _APPEND_MODES and exists:
             existing_pdf = _pandas_read_csv(csv_path, stored or effective_options)
-            if set(existing_pdf.columns) != set(new_pdf.columns):
+            type_conflict = _overlapping_type_conflicts(existing_pdf, new_pdf)
+            column_mismatch = set(existing_pdf.columns) != set(new_pdf.columns)
+            if type_conflict:
                 raise SchemaMismatchError(
                     f"Cannot append to '{ident}': schema mismatch. "
                     f"Existing columns={list(existing_pdf.columns)}, "
                     f"new columns={list(new_pdf.columns)}"
                 )
-            new_pdf = pd.concat(
-                [existing_pdf, new_pdf[existing_pdf.columns]],
-                ignore_index=True,
-            )
+            if column_mismatch and merge_schema:
+                aligned = _align_columns_for_concat(existing_pdf, new_pdf)
+                new_pdf = pd.concat(aligned, ignore_index=True)
+            elif column_mismatch:
+                raise SchemaMismatchError(
+                    f"Cannot append to '{ident}': schema mismatch. "
+                    f"Existing columns={list(existing_pdf.columns)}, "
+                    f"new columns={list(new_pdf.columns)}"
+                )
+            else:
+                new_pdf = pd.concat(
+                    [existing_pdf, new_pdf[existing_pdf.columns]],
+                    ignore_index=True,
+                )
 
         self._write_csv_atomic(new_pdf, csv_path, header=header, options=effective_options)
         self._persist_csv_options(ident, effective_options)
-        self._spark.createDataFrame(new_pdf).createOrReplaceTempView(ident.view_name)
+        self._spark.createDataFrame(_nulls_for_spark(new_pdf)).createOrReplaceTempView(
+            ident.view_name
+        )
 
     def _persist_csv_options(self, ident: TableIdentifier, options: Mapping[str, str]) -> None:
         payload = {key: str(value) for key, value in options.items()}
@@ -362,6 +387,40 @@ def _apply_replace_where(existing_pdf: pd.DataFrame, predicate: str) -> pd.DataF
             f"Unparsable replaceWhere predicate: {predicate!r}"
         ) from exc
     return existing_pdf.drop(matching.index)
+
+
+def _nulls_for_spark(pdf: pd.DataFrame) -> pd.DataFrame:
+    cleaned = pdf.copy()
+    for column in cleaned.columns:
+        cleaned[column] = cleaned[column].where(pd.notna(cleaned[column]), None)
+    return cleaned
+
+
+def _dtype_family(series: pd.Series) -> str:
+    if pd.api.types.is_bool_dtype(series):
+        return "bool"
+    if pd.api.types.is_numeric_dtype(series):
+        return "numeric"
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return "datetime"
+    return "string"
+
+
+def _overlapping_type_conflicts(left: pd.DataFrame, right: pd.DataFrame) -> bool:
+    for column in set(left.columns) & set(right.columns):
+        left_series = left[column].dropna()
+        right_series = right[column].dropna()
+        if left_series.empty or right_series.empty:
+            continue
+        if _dtype_family(left_series) != _dtype_family(right_series):
+            return True
+    return False
+
+
+def _schema_incompatible(left: pd.DataFrame, right: pd.DataFrame) -> bool:
+    if set(left.columns) != set(right.columns):
+        return True
+    return _overlapping_type_conflicts(left, right)
 
 
 def _align_columns_for_concat(left: pd.DataFrame, right: pd.DataFrame) -> list[pd.DataFrame]:

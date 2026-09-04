@@ -146,6 +146,13 @@ class DataFrameWriter(_IoBuilder):
             }
         }
 
+    def _option_flag(self, *names):
+        wanted = {name.lower() for name in names}
+        for key, value in self._options.items():
+            if key.lower() in wanted:
+                return str(value).lower() in {"true", "1", "yes"}
+        return False
+
     def saveAsTable(self, table_name):
         ident = TableIdentifier.parse(table_name)
         self._validate_partition_columns()
@@ -156,6 +163,8 @@ class DataFrameWriter(_IoBuilder):
             header=self._header_flag(),
             replace_where=self._replace_where(),
             csv_options=self._csv_options(),
+            overwrite_schema=self._option_flag("overwriteSchema"),
+            merge_schema=self._option_flag("mergeSchema"),
         )
 
     def insertInto(self, table_name, overwrite=False):
@@ -179,6 +188,8 @@ class DataFrameWriter(_IoBuilder):
             header=self._header_flag(),
             replace_where=self._replace_where(),
             csv_options=self._csv_options(),
+            overwrite_schema=self._option_flag("overwriteSchema"),
+            merge_schema=self._option_flag("mergeSchema"),
         )
 
 

@@ -458,6 +458,57 @@ class TestFileWriteDispatch:
             df.write.format("avro").save("output/people_avro")
 
 
+class TestSchemaOptions:
+    def test_overwrite_schema_true_replaces_columns(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Bob",)], ["Name"])
+        second.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(
+            "default.people"
+        )
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.columns == ["Name"]
+        assert result.collect()[0].Name == "Bob"
+
+    def test_overwrite_schema_false_raises_on_column_change(self, temp_spark):
+        from testbricks.catalog import SchemaMismatchError
+
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Bob",)], ["Name"])
+        with pytest.raises(SchemaMismatchError, match="overwriteSchema"):
+            second.write.mode("overwrite").saveAsTable("default.people")
+
+    def test_merge_schema_appends_missing_columns_as_nulls(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Bob", 25, "UK")], ["Name", "Age", "Country"])
+        second.write.mode("append").option("mergeSchema", "true").saveAsTable(
+            "default.people"
+        )
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.count() == 2
+        assert "Country" in result.columns
+        rows = {row.Name: row.Country for row in result.collect()}
+        assert rows["Alice"] is None
+        assert rows["Bob"] == "UK"
+
+    def test_merge_schema_type_conflict_raises(self, temp_spark):
+        from testbricks.catalog import SchemaMismatchError
+
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = temp_spark.createDataFrame([("Bob", "thirty")], ["Name", "Age"])
+        with pytest.raises(SchemaMismatchError, match="schema mismatch"):
+            second.write.mode("append").option("mergeSchema", "true").saveAsTable(
+                "default.people"
+            )
+
+
 class TestWriteTransformedTable:
     def test_write_transformed_table_creates_expected_csv(self, spark):
         # Uses the shared spark fixture because the source table lives in tests/data.
