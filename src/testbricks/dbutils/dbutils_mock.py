@@ -1,4 +1,6 @@
+from .data import DataMock
 from .fs import FsMock
+from .library import LibraryMock
 from .noop import NoOpModule
 from .notebook import NotebookMock
 from .path_resolver import PathResolver
@@ -18,6 +20,8 @@ class DbutilsMock:
         self.widgets = WidgetsMock()
         self.notebook = NotebookMock(self._executor)
         self.jobs = NoOpModule()
+        self.library = LibraryMock()
+        self.data = DataMock()
 
     @property
     def source_dir(self):
