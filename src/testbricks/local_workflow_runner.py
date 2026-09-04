@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time
 from contextlib import contextmanager
 from graphlib import CycleError, TopologicalSorter
 
@@ -108,6 +109,9 @@ class LocalWorkflowRunner:
         self._task_kind = {}
         self._condition_task = {}
         self._for_each_task = {}
+        self._task_max_retries = {}
+        self._task_retry_interval_ms = {}
+        self._task_timeout_seconds = {}
         self._task_insertion_order = []
         self._notebook_insertion_order = []
         self._task_base_params = {}
@@ -239,6 +243,18 @@ class LocalWorkflowRunner:
             self._task_dependencies[task_key] = dependency_keys
             self._task_dep_specs[task_key] = dep_specs
             self._task_run_if[task_key] = run_if.upper()
+            self._task_max_retries[task_key] = self._parse_non_negative_int(
+                task.get("max_retries"), 0, "max_retries", task_key
+            )
+            self._task_retry_interval_ms[task_key] = self._parse_non_negative_int(
+                task.get("min_retry_interval_millis"),
+                0,
+                "min_retry_interval_millis",
+                task_key,
+            )
+            self._task_timeout_seconds[task_key] = self._parse_non_negative_int(
+                task.get("timeout_seconds"), 0, "timeout_seconds", task_key
+            )
             self._task_insertion_order.append(task_key)
             self._task_base_params[task_key] = base_parameters
 
@@ -250,6 +266,18 @@ class LocalWorkflowRunner:
         notebook_name = notebook_path.rstrip("/").split("/")[-1]
         _require(notebook_name, f"Task '{task_key}' has an invalid notebook_path")
         return notebook_name
+
+    def _parse_non_negative_int(self, raw, default, field, task_key):
+        if raw is None:
+            return default
+        try:
+            value = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Task '{task_key}' has invalid '{field}': {raw!r}"
+            ) from exc
+        _require(value >= 0, f"Task '{task_key}' has invalid '{field}': {raw!r}")
+        return value
 
     def _build_graphs(self):
         successors = {key: set() for key in self._task_insertion_order}
@@ -344,6 +372,42 @@ class LocalWorkflowRunner:
                     selected.add(successor)
                     stack.append(successor)
         return selected
+
+    def _run_task_with_retries(
+        self, task_key, executor, store, execution_globals, extra_globals
+    ):
+        timeout = self._task_timeout_seconds.get(task_key) or 0
+        if timeout:
+            print(
+                f"Task '{task_key}' timeout_seconds={timeout} accepted but not enforced"
+            )
+
+        def action():
+            kind = self._task_kind[task_key]
+            if kind == "condition":
+                self.task_results[task_key] = self._evaluate_condition(task_key, store)
+            elif kind == "for_each":
+                self._run_for_each_task(task_key, executor, store, extra_globals)
+            else:
+                self._run_notebook_task(task_key, executor, store, execution_globals)
+
+        retries = self._task_max_retries.get(task_key, 0)
+        interval_ms = self._task_retry_interval_ms.get(task_key, 0)
+        attempt = 0
+        while True:
+            try:
+                action()
+                return
+            except Exception as exc:
+                attempt += 1
+                if attempt > retries:
+                    raise
+                print(
+                    f"Task '{task_key}' failed "
+                    f"(attempt {attempt}/{retries + 1}), retrying: {exc}"
+                )
+                if interval_ms:
+                    time.sleep(interval_ms / 1000.0)
 
     def _executor(self):
         from testbricks.dbutils import dbutils
@@ -483,19 +547,9 @@ class LocalWorkflowRunner:
                 print(f"Skipping task '{task_key}': run_if not met")
                 continue
             try:
-                kind = self._task_kind[task_key]
-                if kind == "condition":
-                    self.task_results[task_key] = self._evaluate_condition(
-                        task_key, store
-                    )
-                elif kind == "for_each":
-                    self._run_for_each_task(
-                        task_key, executor, store, extra_globals
-                    )
-                else:
-                    self._run_notebook_task(
-                        task_key, executor, store, execution_globals
-                    )
+                self._run_task_with_retries(
+                    task_key, executor, store, execution_globals, extra_globals
+                )
             except Exception as exc:
                 self.task_statuses[task_key] = "FAILED"
                 if first_error is None:

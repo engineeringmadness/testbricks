@@ -38,7 +38,7 @@ Storage stays `{base_path}/{schema}/{table}.csv` + temp views `{schema}_{table}`
 - [x] **T3. `if/else` condition tasks** — support `condition_task` (`op`: `EQUAL`, `NOT_EQUAL`, `GREATER_THAN`, etc. over left/right operands referencing `taskValues`/params); route to the matching branch and mark the other branch skipped. Reuses T1 values + T2 skip machinery.
 - [x] **T4. `for_each` parameter expansion** — support `for_each_task` with `inputs` (literal list or `taskValues` reference) + `concurrency`; execute the nested notebook once per input with per-iteration params/env isolation; iterate sequentially first, parallel as a later stretch. Builds on executor `run_isolated` semantics.
 - [x] **T5. Repair-and-rerun + idempotent re-execution** — allow `run_workflow(only=["task_a"])` / `from_task` to re-run a subgraph; document that `overwrite` saves are naturally idempotent while `append` saves need a `repair` policy (skip, dedupe-key, or explicit overwrite flag). Runner-only change + docs, no catalog change.
-- [ ] **T6. Per-task retries / timeouts** — parse `max_retries` / `min_retry_interval_millis` / `timeout_seconds` from workflow JSON; retry failed notebook tasks N times, accept-but-log timeout (matching current `dbutils.notebook.run(timeout)` behavior of accept-not-enforce, or enforce via signals as a stretch). Loop wrapper in `run_workflow`.
+- [x] **T6. Per-task retries / timeouts** — parse `max_retries` / `min_retry_interval_millis` / `timeout_seconds` from workflow JSON; retry failed notebook tasks N times, accept-but-log timeout (matching current `dbutils.notebook.run(timeout)` behavior of accept-not-enforce, or enforce via signals as a stretch). Loop wrapper in `run_workflow`.
 
 ### Cluster 2 — `spark.write` fidelity (in order)
 

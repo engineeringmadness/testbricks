@@ -918,6 +918,100 @@ class TestRepairAndRerun:
             runner.run_workflow(only=["task_1"], from_task="task_1")
 
 
+class TestRetriesAndTimeouts:
+    def _runner(self, tmp_path, tasks, notebooks):
+        source_dir = tmp_path / "local_src"
+        source_dir.mkdir()
+        _write_notebooks(source_dir, notebooks)
+        workflow_path = tmp_path / "workflow.json"
+        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
+        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+
+    def test_retries_until_success(self, tmp_path):
+        counter = tmp_path / "counter.txt"
+        counter.write_text("0", encoding="utf-8")
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "flaky",
+                    "max_retries": 2,
+                    "min_retry_interval_millis": 0,
+                    "notebook_task": {"notebook_path": "/Workspace/any/flaky"},
+                }
+            ],
+            {
+                "flaky": (
+                    f"from pathlib import Path\n"
+                    f"p = Path(r'{counter}')\n"
+                    "n = int(p.read_text())\n"
+                    "p.write_text(str(n + 1))\n"
+                    "if n < 2:\n"
+                    "    raise RuntimeError('not yet')\n"
+                )
+            },
+        )
+        runner.run_workflow()
+        assert runner.task_statuses["flaky"] == "SUCCESS"
+        assert counter.read_text(encoding="utf-8") == "3"
+
+    def test_retry_exhaustion_reraises(self, tmp_path):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "always_fail",
+                    "max_retries": 1,
+                    "notebook_task": {"notebook_path": "/Workspace/any/always_fail"},
+                }
+            ],
+            {"always_fail": "raise RuntimeError('still bad')\n"},
+        )
+        with pytest.raises(RuntimeError, match="still bad"):
+            runner.run_workflow()
+        assert runner.task_statuses["always_fail"] == "FAILED"
+
+    def test_retry_interval_sleeps(self, tmp_path, monkeypatch):
+        slept = []
+        monkeypatch.setattr(
+            "testbricks.local_workflow_runner.time.sleep",
+            lambda seconds: slept.append(seconds),
+        )
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "flaky",
+                    "max_retries": 1,
+                    "min_retry_interval_millis": 50,
+                    "notebook_task": {"notebook_path": "/Workspace/any/flaky"},
+                }
+            ],
+            {"flaky": "raise RuntimeError('nope')\n"},
+        )
+        with pytest.raises(RuntimeError, match="nope"):
+            runner.run_workflow()
+        assert slept == [0.05]
+
+    def test_timeout_seconds_accepted_not_enforced(self, tmp_path, capsys):
+        runner = self._runner(
+            tmp_path,
+            [
+                {
+                    "task_key": "task_1",
+                    "timeout_seconds": 1,
+                    "notebook_task": {"notebook_path": "/Workspace/any/main"},
+                }
+            ],
+            {"main": "pass\n"},
+        )
+        runner.run_workflow()
+        captured = capsys.readouterr()
+        assert "timeout_seconds=1" in captured.out
+        assert "not enforced" in captured.out
+        assert runner.task_statuses["task_1"] == "SUCCESS"
+
+
 class TestWorkflowValidation:
     def test_missing_tasks_raises(self, tmp_path):
         workflow_path = tmp_path / "workflow.json"
