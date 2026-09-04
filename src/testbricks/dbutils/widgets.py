@@ -42,10 +42,35 @@ class WidgetsMock:
             )
         return self._register(name, default)
 
+    def combobox(self, name, default, choices, label=None):
+        return self.dropdown(name, default, choices, label)
+
+    def multiselect(self, name, default, choices, label=None):
+        selected = [part.strip() for part in str(default).split(",")]
+        selected = [part for part in selected if part]
+        if not selected:
+            selected = [default]
+        for value in selected:
+            if value not in choices:
+                raise DbutilsError(
+                    f"Default value '{default}' is not in choices {list(choices)}"
+                )
+        return self._register(name, default)
+
     def get(self, name):
         if name not in self._registry:
             raise DbutilsError(f"Widget '{name}' does not exist")
         return os.environ[name]
+
+    def getAll(self):
+        return {name: os.environ[name] for name in self._registry}
+
+    def getArgument(self, name, optional=None):
+        if name in self._registry:
+            return self.get(name)
+        if optional is not None:
+            return str(optional)
+        return self.get(name)
 
     def remove(self, name):
         if name in self._registry:
