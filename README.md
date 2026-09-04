@@ -82,6 +82,30 @@ if country != "ALL":
 df.write.mode("overwrite").saveAsTable("silver.customers_enriched")
 ```
 
+## Spark write modes and schema options
+
+Table writes (`saveAsTable` / `insertInto`) stay CSV-backed. File writes (`csv` / `parquet` / `json` / `save`) use native Spark under `base_path`. `format("delta").save(path)` is stored as parquet (no Delta log).
+
+| Write | Missing table | Existing table |
+|---|---|---|
+| default / `overwrite` | create | replace rows |
+| `append` | create | append rows (exact column set, unless `mergeSchema`) |
+| `error` / `errorIfExists` | create | raise `AnalysisException` |
+| `ignore` | create | no-op (file and temp view unchanged) |
+| `insertInto` | raise `AnalysisException` | append, or replace when `overwrite=True` / `mode("overwrite")` |
+
+Schema flags:
+
+| Option | Effect |
+|---|---|
+| `overwriteSchema=true` + overwrite | replace the CSV even when columns change |
+| `overwriteSchema=false` (default) + overwrite | raise `SchemaMismatchError` on incompatible schema change |
+| `mergeSchema=true` + append | union missing columns with nulls |
+| `mergeSchema=false` (default) + append | raise `SchemaMismatchError` if columns differ |
+| same column, incompatible types | always raise `SchemaMismatchError` (merge only adds columns) |
+
+`partitionBy` columns must exist on the DataFrame. `option("replaceWhere", "<predicate>")` with `mode("overwrite")` deletes matching stored rows then appends the new frame. `bucketBy` / `sortBy` are accepted no-ops (bucketing is not simulated). `df.writeTo(table).using(...).create()` / `.replace()` / `.append()` maps onto the same table writer; `createOrReplace` and `overwritePartitions` raise `NotImplementedError` with a `saveAsTable` hint.
+
 ## Key Modules
 1. `SparkProxy` - A Spark proxy that manipulates incoming Delta table reads and writes and redirects them to interactions with CSV files stored locally
 2. `LocalWorkflowRunner` - A notebook orchestrator that takes the notebook .py files as defined in a Databricks Workflow JSON file and executes them as per the DAG definition. Databricks comment magics `%run`, `%sh` (`# %sh` / `# MAGIC %sh`, including `%sh -e`), and `%fs` (`# %fs` / `# MAGIC %fs`) work in those notebooks.

@@ -227,6 +227,287 @@ class TestWriteTable:
         with pytest.raises(ValueError, match="schema mismatch"):
             second.write.mode("append").saveAsTable("default.people")
 
+    def test_save_as_table_error_mode_raises_when_table_exists(self, temp_spark):
+        from pyspark.sql.utils import AnalysisException
+
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Bob", 25)], ["Name", "Age"])
+        with pytest.raises(AnalysisException, match="default.people"):
+            second.write.mode("error").saveAsTable("default.people")
+        with pytest.raises(AnalysisException, match="already exists"):
+            second.write.mode("errorIfExists").saveAsTable("default.people")
+
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.count() == 1
+        assert result.collect()[0].Name == "Alice"
+
+    def test_save_as_table_ignore_mode_skips_existing_table(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+        csv_path = os.path.join(temp_spark._base_path, "default", "people.csv")
+        mtime_before = os.path.getmtime(csv_path)
+
+        second = _make_df(temp_spark, [("Bob", 25)], ["Name", "Age"])
+        second.write.mode("ignore").saveAsTable("default.people")
+
+        assert os.path.getmtime(csv_path) == mtime_before
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.count() == 1
+        assert result.collect()[0].Name == "Alice"
+
+    def test_save_as_table_error_and_ignore_create_missing_table(self, temp_spark):
+        error_df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        error_df.write.mode("error").saveAsTable("default.from_error")
+        assert temp_spark.sql("SELECT * FROM default.from_error").count() == 1
+
+        ignore_df = _make_df(temp_spark, [("Bob", 25)], ["Name", "Age"])
+        ignore_df.write.mode("IGNORE").saveAsTable("default.from_ignore")
+        assert temp_spark.sql("SELECT * FROM default.from_ignore").count() == 1
+
+    def test_save_as_table_unknown_mode_raises(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        with pytest.raises(ValueError, match="Unknown save mode"):
+            df.write.mode("upsert").saveAsTable("default.people")
+
+
+class TestInsertInto:
+    def test_insert_into_appends_to_existing_table(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Bob", 25)], ["Name", "Age"])
+        second.write.insertInto("default.people")
+
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.count() == 2
+        assert {row.Name for row in result.collect()} == {"Alice", "Bob"}
+
+    def test_insert_into_overwrite_kwarg_replaces_rows(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30), ("Bob", 25)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Charlie", 35)], ["Name", "Age"])
+        second.write.insertInto("default.people", overwrite=True)
+
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.count() == 1
+        assert result.collect()[0].Name == "Charlie"
+
+    def test_insert_into_honors_writer_overwrite_mode(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Dana", 40)], ["Name", "Age"])
+        second.write.mode("overwrite").insertInto("default.people")
+
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.count() == 1
+        assert result.collect()[0].Name == "Dana"
+
+    def test_insert_into_missing_table_raises(self, temp_spark):
+        from pyspark.sql.utils import AnalysisException
+
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        with pytest.raises(AnalysisException, match="TABLE_OR_VIEW_NOT_FOUND"):
+            df.write.insertInto("default.missing")
+
+
+class TestPartitionByAndReplaceWhere:
+    def test_partition_by_unknown_column_raises(self, temp_spark):
+        from pyspark.sql.utils import AnalysisException
+
+        df = _make_df(temp_spark, [("Alice", 30, "2024-01-01")], ["Name", "Age", "dt"])
+        with pytest.raises(AnalysisException, match="partitionBy columns"):
+            df.write.mode("overwrite").partitionBy("missing").saveAsTable("silver.people")
+
+    def test_replace_where_overwrites_matching_rows_only(self, temp_spark):
+        first = _make_df(
+            temp_spark,
+            [("Alice", "2026-09-01"), ("Bob", "2026-09-02")],
+            ["Name", "dt"],
+        )
+        first.write.mode("overwrite").partitionBy("dt").saveAsTable("silver.people")
+
+        replacement = _make_df(
+            temp_spark,
+            [("Carol", "2026-09-01")],
+            ["Name", "dt"],
+        )
+        replacement.write.format("delta").mode("overwrite").option(
+            "replaceWhere", "dt = '2026-09-01'"
+        ).partitionBy("dt").saveAsTable("silver.people")
+
+        result = temp_spark.sql("SELECT * FROM silver.people")
+        rows = {(row.Name, row.dt) for row in result.collect()}
+        assert rows == {("Carol", "2026-09-01"), ("Bob", "2026-09-02")}
+
+    def test_replace_where_unparsable_predicate_raises(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", "2026-09-01")], ["Name", "dt"])
+        first.write.mode("overwrite").saveAsTable("silver.people")
+
+        replacement = _make_df(temp_spark, [("Carol", "2026-09-01")], ["Name", "dt"])
+        with pytest.raises(ValueError, match="Unparsable replaceWhere predicate"):
+            replacement.write.mode("overwrite").option(
+                "replaceWhere", "not a valid predicate !!!"
+            ).saveAsTable("silver.people")
+
+        assert temp_spark.sql("SELECT * FROM silver.people").collect()[0].Name == "Alice"
+
+    def test_replace_where_requires_overwrite_mode(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", "2026-09-01")], ["Name", "dt"])
+        first.write.mode("overwrite").saveAsTable("silver.people")
+        replacement = _make_df(temp_spark, [("Carol", "2026-09-01")], ["Name", "dt"])
+        with pytest.raises(ValueError, match="replaceWhere"):
+            replacement.write.mode("append").option(
+                "replaceWhere", "dt = '2026-09-01'"
+            ).saveAsTable("silver.people")
+
+
+class TestCsvWriteOptions:
+    def test_save_as_table_pipe_delimiter_round_trips_on_read(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30), ("Bob", 25)], ["Name", "Age"])
+        df.write.mode("overwrite").option("delimiter", "|").saveAsTable("default.people")
+
+        csv_path = os.path.join(temp_spark._base_path, "default", "people.csv")
+        with open(csv_path, encoding="utf-8") as handle:
+            contents = handle.read()
+        assert "Alice|30" in contents
+
+        result = temp_spark.read.table("default.people")
+        assert result.count() == 2
+        assert {row.Name for row in result.collect()} == {"Alice", "Bob"}
+
+    def test_save_as_table_null_value_round_trips(self, temp_spark):
+        df = temp_spark.createDataFrame([(None, 1), ("Alice", 2)], ["Name", "Age"])
+        df.write.mode("overwrite").option("nullValue", "NA").saveAsTable("default.people")
+
+        csv_path = os.path.join(temp_spark._base_path, "default", "people.csv")
+        with open(csv_path, encoding="utf-8") as handle:
+            contents = handle.read()
+        assert "NA" in contents
+
+        result = temp_spark.read.table("default.people")
+        names = [row.Name for row in result.collect()]
+        assert None in names
+        assert "Alice" in names
+
+    def test_save_as_table_date_format(self, temp_spark):
+        from datetime import date
+
+        df = temp_spark.createDataFrame([(date(2026, 9, 1),)], ["dt"])
+        df.write.mode("overwrite").option("dateFormat", "dd/MM/yyyy").saveAsTable(
+            "default.dates"
+        )
+        csv_path = os.path.join(temp_spark._base_path, "default", "dates.csv")
+        with open(csv_path, encoding="utf-8") as handle:
+            contents = handle.read()
+        assert "01/09/2026" in contents
+
+        result = temp_spark.read.table("default.dates")
+        assert result.count() == 1
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Native Spark CSV writer requires Hadoop winutils on Windows")
+    def test_csv_path_write_honors_delimiter(self, temp_spark):
+        df = _make_df(temp_spark, [(1, "a")], ["id", "name"])
+        df.write.mode("overwrite").option("delimiter", "|").option("header", "true").csv(
+            "output/pipe"
+        )
+        output_dir = os.path.join(temp_spark._base_path, "output", "pipe")
+        csv_files = [f for f in os.listdir(output_dir) if f.endswith(".csv")]
+        with open(os.path.join(output_dir, csv_files[0]), encoding="utf-8") as handle:
+            body = handle.read()
+        assert "|" in body
+
+
+class TestFileWriteDispatch:
+    @pytest.mark.skipif(sys.platform == "win32", reason="Native Spark file writers require Hadoop winutils on Windows")
+    def test_parquet_write_is_readable(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        df.write.mode("overwrite").parquet("output/people_parquet")
+        path = os.path.join(temp_spark._base_path, "output", "people_parquet")
+        result = temp_spark._spark_session.read.parquet(path)
+        assert result.count() == 1
+        assert result.collect()[0].Name == "Alice"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Native Spark file writers require Hadoop winutils on Windows")
+    def test_json_write_is_readable(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        df.write.mode("overwrite").json("output/people_json")
+        path = os.path.join(temp_spark._base_path, "output", "people_json")
+        result = temp_spark._spark_session.read.json(path)
+        assert result.count() == 1
+        assert result.collect()[0].Name == "Alice"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Native Spark file writers require Hadoop winutils on Windows")
+    def test_format_delta_save_writes_parquet(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        df.write.format("delta").mode("overwrite").save("output/people_delta")
+        path = os.path.join(temp_spark._base_path, "output", "people_delta")
+        result = temp_spark._spark_session.read.parquet(path)
+        assert result.count() == 1
+        parquet_files = [
+            name for name in os.listdir(path) if name.endswith(".parquet")
+        ]
+        assert parquet_files
+
+    def test_unknown_file_format_raises(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        with pytest.raises(ValueError, match="Unknown format"):
+            df.write.format("avro").save("output/people_avro")
+
+
+class TestSchemaOptions:
+    def test_overwrite_schema_true_replaces_columns(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Bob",)], ["Name"])
+        second.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(
+            "default.people"
+        )
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.columns == ["Name"]
+        assert result.collect()[0].Name == "Bob"
+
+    def test_overwrite_schema_false_raises_on_column_change(self, temp_spark):
+        from testbricks.catalog import SchemaMismatchError
+
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Bob",)], ["Name"])
+        with pytest.raises(SchemaMismatchError, match="overwriteSchema"):
+            second.write.mode("overwrite").saveAsTable("default.people")
+
+    def test_merge_schema_appends_missing_columns_as_nulls(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = _make_df(temp_spark, [("Bob", 25, "UK")], ["Name", "Age", "Country"])
+        second.write.mode("append").option("mergeSchema", "true").saveAsTable(
+            "default.people"
+        )
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.count() == 2
+        assert "Country" in result.columns
+        rows = {row.Name: row.Country for row in result.collect()}
+        assert rows["Alice"] is None
+        assert rows["Bob"] == "UK"
+
+    def test_merge_schema_type_conflict_raises(self, temp_spark):
+        from testbricks.catalog import SchemaMismatchError
+
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.write.mode("overwrite").saveAsTable("default.people")
+
+        second = temp_spark.createDataFrame([("Bob", "thirty")], ["Name", "Age"])
+        with pytest.raises(SchemaMismatchError, match="schema mismatch"):
+            second.write.mode("append").option("mergeSchema", "true").saveAsTable(
+                "default.people"
+            )
+
 
 class TestWriteTransformedTable:
     def test_write_transformed_table_creates_expected_csv(self, spark):
@@ -273,6 +554,41 @@ class TestDataFrameWriter:
         assert writer._format == "delta"
         assert writer._partition_by == ("id",)
         assert writer._options == {"header": "true"}
+
+    def test_bucket_by_sort_by_chain_is_noop(self, temp_spark):
+        df = _make_df(temp_spark, [(1, "a")], ["id", "name"])
+        writer = df.write.mode("overwrite").bucketBy(4, "id").sortBy("name")
+        assert writer._bucket_by == (4, ("id",))
+        assert writer._sort_by == ("name",)
+        writer.saveAsTable("default.bucketed")
+        assert temp_spark.sql("SELECT * FROM default.bucketed").count() == 1
+
+
+class TestWriteTo:
+    def test_write_to_create_replace_and_append(self, temp_spark):
+        first = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        first.writeTo("default.people").using("delta").partitionedBy("Age").create()
+        assert temp_spark.sql("SELECT * FROM default.people").count() == 1
+
+        from pyspark.sql.utils import AnalysisException
+
+        with pytest.raises(AnalysisException, match="already exists"):
+            first.writeTo("default.people").create()
+
+        replacement = _make_df(temp_spark, [("Bob",)], ["Name"])
+        replacement.writeTo("default.people").option("header", "true").replace()
+        result = temp_spark.sql("SELECT * FROM default.people")
+        assert result.columns == ["Name"]
+        assert result.collect()[0].Name == "Bob"
+
+        extra = _make_df(temp_spark, [("Carol",)], ["Name"])
+        extra.writeTo("default.people").append()
+        assert temp_spark.sql("SELECT * FROM default.people").count() == 2
+
+    def test_write_to_create_or_replace_raises_with_hint(self, temp_spark):
+        df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
+        with pytest.raises(NotImplementedError, match="saveAsTable"):
+            df.writeTo("default.people").createOrReplace()
 
 
 class TestSparkProxyLifecycle:
