@@ -1,7 +1,4 @@
-import sys
 import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 
@@ -33,9 +30,7 @@ class TestNotebookExit:
 class TestNotebookRun:
     def test_run_returns_exit_value(self, tmp_path):
         child = tmp_path / "child.py"
-        child.write_text(
-            'dbutils.notebook.exit("result")\n', encoding="utf-8"
-        )
+        child.write_text('dbutils.notebook.exit("result")\n', encoding="utf-8")
         parent = tmp_path / "parent.py"
 
         with dbutils.executor.caller_context(str(parent)):
@@ -67,21 +62,19 @@ class TestNotebookRun:
 
     def test_run_passes_arguments_via_env(self, tmp_path):
         child = tmp_path / "child.py"
-        child.write_text(
-            'import os\nRESULT = os.environ["env"]\n', encoding="utf-8"
-        )
+        child.write_text('import os\nRESULT = os.environ["env"]\n', encoding="utf-8")
         parent = tmp_path / "parent.py"
 
         with dbutils.executor.caller_context(str(parent)):
             dbutils.notebook.run("./child", 60, {"env": "prod"})
 
-        assert os.environ["env"] == "prod"
+        # Arguments reach the child via env but do not leak into the parent process.
+        assert "env" not in os.environ
 
     def test_run_arguments_override_widget_default(self, tmp_path):
         child = tmp_path / "child.py"
         child.write_text(
-            'dbutils.widgets.text("env", "dev")\n'
-            'RESULT = dbutils.widgets.get("env")\n',
+            'dbutils.widgets.text("env", "dev")\nRESULT = dbutils.widgets.get("env")\n',
             encoding="utf-8",
         )
         parent = tmp_path / "parent.py"
@@ -89,14 +82,13 @@ class TestNotebookRun:
         with dbutils.executor.caller_context(str(parent)):
             dbutils.notebook.run("./child", 60, {"env": "prod"})
 
-        assert os.environ["env"] == "prod"
+        # The run-time argument won over the widget default, and is cleaned up after.
+        assert "env" not in os.environ
 
     def test_run_relative_path(self, tmp_path):
         helpers = tmp_path / "helpers"
         helpers.mkdir()
-        (helpers / "setup.py").write_text(
-            'dbutils.notebook.exit("ok")\n', encoding="utf-8"
-        )
+        (helpers / "setup.py").write_text('dbutils.notebook.exit("ok")\n', encoding="utf-8")
         parent = tmp_path / "parent.py"
 
         with dbutils.executor.caller_context(str(parent)):

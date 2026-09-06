@@ -46,7 +46,35 @@ class SparkProxy:
         return self._wrap(self._spark_session.sql(rewrite_from_join_identifiers(query)))
 
     def parallelize(self, c, numSlices=None):
-        return self._wrap(self._spark_session.sparkContext.parallelize(c, numSlices))
+        return self._spark_session.sparkContext.parallelize(c, numSlices)
 
-    def _get_full_path(self, relative_path):
+    def read_table(self, ident, options=None):
+        """Read a registered CSV table by ``TableIdentifier`` (public catalog access)."""
+        return self._catalog.read_csv(ident, options)
+
+    def full_path(self, relative_path):
+        """Absolute local path for a path relative to the catalog base directory."""
         return self._catalog.full_path(relative_path)
+
+    def save_table(
+        self,
+        ident,
+        dataframe,
+        mode=None,
+        header=True,
+        replace_where=None,
+        csv_options=None,
+        overwrite_schema=False,
+        merge_schema=False,
+    ):
+        """Persist a DataFrame as a CSV-backed table (public catalog access)."""
+        self._catalog.save_dataframe(
+            ident,
+            dataframe,
+            mode=mode,
+            header=header,
+            replace_where=replace_where,
+            csv_options=csv_options,
+            overwrite_schema=overwrite_schema,
+            merge_schema=merge_schema,
+        )

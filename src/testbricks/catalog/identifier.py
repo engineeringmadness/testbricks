@@ -7,11 +7,16 @@ from dataclasses import dataclass
 from .errors import InvalidTableNameError
 
 
+def strip_wrappers(text: str, wrapper_chars: str = "`") -> str:
+    """Strip one layer of symmetric wrapper characters (e.g. backticks, quotes)."""
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in wrapper_chars:
+        return text[1:-1]
+    return text
+
+
 def _strip_identifier_part(part: str) -> str:
-    part = part.strip()
-    if len(part) >= 2 and part[0] == "`" and part[-1] == "`":
-        return part[1:-1]
-    return part
+    return strip_wrappers(part)
 
 
 def _split_qualified_name(table_name: str) -> list[str]:

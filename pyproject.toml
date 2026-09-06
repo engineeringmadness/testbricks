@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "testbricks"
 description = "A set of proxy objects to facilitate testing of Databricks notebooks in CI/CD pipelines"
 dynamic = ["version"]
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 authors = [
     {name = "Karan Gupta", email = "gkaran184@gmail.com"},
 ]
@@ -21,8 +21,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -30,7 +28,28 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest", "coverage", "ruff", "mypy"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools_scm]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Databricks notebook fixtures: spark/dbutils are injected at runtime.
+"tests/e2e_workflow/notebooks/*.py" = ["F821"]
+
+[tool.mypy]
+# numpy/pandas stubs use Python 3.12 syntax, so the checker must run as 3.12
+# even though the package supports 3.10+.
+python_version = "3.12"
+ignore_missing_imports = true

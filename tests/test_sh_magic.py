@@ -1,13 +1,7 @@
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+from unittest.mock import patch
 
 import pytest
 
-from unittest.mock import patch
-
-from testbricks.dbutils import configure, dbutils
 from testbricks.notebook_exceptions import NotebookExit, ShellCommandError
 from testbricks.notebook_executor import (
     run_shell,
@@ -117,13 +111,6 @@ class TestRunShell:
                 run_shell("echo hi")
 
 
-@pytest.fixture
-def notebook_executor(tmp_path):
-    configure(str(tmp_path), source_dir=str(tmp_path))
-    yield dbutils.executor
-    dbutils.widgets.removeAll()
-
-
 class TestExecFileShMagic:
     def test_executes_sh_and_continues(self, tmp_path, notebook_executor, capsys):
         notebook = tmp_path / "main.py"
@@ -153,9 +140,7 @@ class TestExecFileShMagic:
         main = tmp_path / "main.py"
         main.write_text("# %run ./child\nAFTER = True\n", encoding="utf-8")
         namespace = {"__name__": "__main__", "__file__": str(main)}
-        namespace["__run_notebook__"] = lambda path: notebook_executor.run_shared(
-            path, namespace
-        )
+        namespace["__run_notebook__"] = lambda path: notebook_executor.run_shared(path, namespace)
         notebook_executor.exec_file(str(main), namespace, top_level=True)
         captured = capsys.readouterr()
         assert "from_child" in captured.out
@@ -167,4 +152,3 @@ class TestExecFileShMagic:
         with notebook_executor.caller_context(str(parent)):
             with pytest.raises(ShellCommandError):
                 notebook_executor.run_isolated("./child")
-

@@ -1,16 +1,15 @@
-import sys
 import os
-
-# Ensure src is on the path so `testbricks` can be imported during pytest collection.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+import sys
 
 import pytest
-import shutil
 
 from testbricks.spark_proxy import SparkProxy
 
-
 TEST_DIR = "tests/data"
+
+WINUTILS_SKIP = pytest.mark.skipif(
+    sys.platform == "win32", reason="Native Spark file writers require Hadoop winutils on Windows"
+)
 
 
 @pytest.fixture(scope="session")
@@ -36,6 +35,7 @@ def temp_spark(tmp_path):
 def _make_df(spark_proxy, rows, columns):
     """Create a DataFrameWrapper from local data without using parallelize."""
     from testbricks.data_frame_wrapper import DataFrameWrapper
+
     spark_df = spark_proxy._spark_session.createDataFrame(rows, schema=columns)
     return DataFrameWrapper(spark_proxy, spark_df)
 
@@ -55,7 +55,9 @@ class TestReadTable:
             spark.read.table("drivers")
 
     def test_read_table_missing_file_raises(self, spark):
-        with pytest.raises(Exception):
+        from pyspark.sql.utils import AnalysisException
+
+        with pytest.raises(AnalysisException):
             spark.read.option("header", "true").table("f1_data.missing_table")
 
 
@@ -126,9 +128,9 @@ class TestDeltaWriteShims:
             [("Alice", 30, "2024-01-01")],
             ["Name", "Age", "dt"],
         )
-        df.write.format("delta").mode("overwrite").option(
-            "overwriteSchema", "true"
-        ).partitionBy("dt").saveAsTable("silver.people")
+        df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").partitionBy(
+            "dt"
+        ).saveAsTable("silver.people")
 
         csv_path = os.path.join(temp_spark._base_path, "silver", "people.csv")
         assert os.path.exists(csv_path)
@@ -143,9 +145,7 @@ class TestDeltaWriteShims:
     def test_save_as_table_three_part_name(self, temp_spark):
         df = temp_spark.createDataFrame([("Bob", 25)], ["Name", "Age"])
         df.write.mode("overwrite").saveAsTable("main.default.people")
-        assert os.path.exists(
-            os.path.join(temp_spark._base_path, "default", "people.csv")
-        )
+        assert os.path.exists(os.path.join(temp_spark._base_path, "default", "people.csv"))
         assert temp_spark.sql("SELECT * FROM default.people").count() == 1
 
 
@@ -397,9 +397,7 @@ class TestCsvWriteOptions:
         from datetime import date
 
         df = temp_spark.createDataFrame([(date(2026, 9, 1),)], ["dt"])
-        df.write.mode("overwrite").option("dateFormat", "dd/MM/yyyy").saveAsTable(
-            "default.dates"
-        )
+        df.write.mode("overwrite").option("dateFormat", "dd/MM/yyyy").saveAsTable("default.dates")
         csv_path = os.path.join(temp_spark._base_path, "default", "dates.csv")
         with open(csv_path, encoding="utf-8") as handle:
             contents = handle.read()
@@ -408,7 +406,7 @@ class TestCsvWriteOptions:
         result = temp_spark.read.table("default.dates")
         assert result.count() == 1
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="Native Spark CSV writer requires Hadoop winutils on Windows")
+    @WINUTILS_SKIP
     def test_csv_path_write_honors_delimiter(self, temp_spark):
         df = _make_df(temp_spark, [(1, "a")], ["id", "name"])
         df.write.mode("overwrite").option("delimiter", "|").option("header", "true").csv(
@@ -422,7 +420,7 @@ class TestCsvWriteOptions:
 
 
 class TestFileWriteDispatch:
-    @pytest.mark.skipif(sys.platform == "win32", reason="Native Spark file writers require Hadoop winutils on Windows")
+    @WINUTILS_SKIP
     def test_parquet_write_is_readable(self, temp_spark):
         df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
         df.write.mode("overwrite").parquet("output/people_parquet")
@@ -431,7 +429,7 @@ class TestFileWriteDispatch:
         assert result.count() == 1
         assert result.collect()[0].Name == "Alice"
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="Native Spark file writers require Hadoop winutils on Windows")
+    @WINUTILS_SKIP
     def test_json_write_is_readable(self, temp_spark):
         df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
         df.write.mode("overwrite").json("output/people_json")
@@ -440,16 +438,14 @@ class TestFileWriteDispatch:
         assert result.count() == 1
         assert result.collect()[0].Name == "Alice"
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="Native Spark file writers require Hadoop winutils on Windows")
+    @WINUTILS_SKIP
     def test_format_delta_save_writes_parquet(self, temp_spark):
         df = _make_df(temp_spark, [("Alice", 30)], ["Name", "Age"])
         df.write.format("delta").mode("overwrite").save("output/people_delta")
         path = os.path.join(temp_spark._base_path, "output", "people_delta")
         result = temp_spark._spark_session.read.parquet(path)
         assert result.count() == 1
-        parquet_files = [
-            name for name in os.listdir(path) if name.endswith(".parquet")
-        ]
+        parquet_files = [name for name in os.listdir(path) if name.endswith(".parquet")]
         assert parquet_files
 
     def test_unknown_file_format_raises(self, temp_spark):
@@ -486,9 +482,7 @@ class TestSchemaOptions:
         first.write.mode("overwrite").saveAsTable("default.people")
 
         second = _make_df(temp_spark, [("Bob", 25, "UK")], ["Name", "Age", "Country"])
-        second.write.mode("append").option("mergeSchema", "true").saveAsTable(
-            "default.people"
-        )
+        second.write.mode("append").option("mergeSchema", "true").saveAsTable("default.people")
         result = temp_spark.sql("SELECT * FROM default.people")
         assert result.count() == 2
         assert "Country" in result.columns
@@ -504,18 +498,14 @@ class TestSchemaOptions:
 
         second = temp_spark.createDataFrame([("Bob", "thirty")], ["Name", "Age"])
         with pytest.raises(SchemaMismatchError, match="schema mismatch"):
-            second.write.mode("append").option("mergeSchema", "true").saveAsTable(
-                "default.people"
-            )
+            second.write.mode("append").option("mergeSchema", "true").saveAsTable("default.people")
 
 
 class TestWriteTransformedTable:
     def test_write_transformed_table_creates_expected_csv(self, spark):
         # Uses the shared spark fixture because the source table lives in tests/data.
         df = spark.read.option("header", "true").table("f1_data.drivers")
-        uk = df.filter("Country = 'United Kingdom'") \
-               .select("Abbreviation") \
-               .distinct()
+        uk = df.filter("Country = 'United Kingdom'").select("Abbreviation").distinct()
         uk.write.mode("overwrite").saveAsTable("f1_data.uk_drivers")
 
         csv_path = os.path.join(spark._base_path, "f1_data", "uk_drivers.csv")
@@ -526,7 +516,7 @@ class TestWriteTransformedTable:
         assert set(result.columns) == {"Abbreviation"}
         assert set(row.Abbreviation for row in result.collect()) == {"NOR", "RUS", "HAM", "BEA"}
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="Native Spark CSV writer requires Hadoop winutils on Windows")
+    @WINUTILS_SKIP
     def test_write_csv_with_mode_and_options(self, temp_spark):
         df = _make_df(temp_spark, [(1,), (2,)], ["id"])
         df.write.mode("overwrite").option("header", "false").csv("output/no_header")
@@ -547,8 +537,8 @@ class TestDataFrameReader:
 class TestDataFrameWriter:
     def test_writer_mode_option_chain(self, temp_spark):
         df = _make_df(temp_spark, [(1,)], ["id"])
-        writer = df.write.format("delta").mode("overwrite").partitionBy("id").option(
-            "header", "true"
+        writer = (
+            df.write.format("delta").mode("overwrite").partitionBy("id").option("header", "true")
         )
         assert writer._mode == "overwrite"
         assert writer._format == "delta"

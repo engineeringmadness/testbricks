@@ -18,6 +18,27 @@ def argument_override_context(keys):
         _argument_overrides.reset(token)
 
 
+@contextmanager
+def seeded_environ(values, *, overwrite=True):
+    """Set env vars for the duration of the block, then restore prior state.
+
+    With ``overwrite=False`` existing env vars win (used for workflow
+    ``base_parameters``, which must not clobber real environment settings).
+    """
+    saved = {key: os.environ.get(key) for key in values}
+    for key, value in values.items():
+        if overwrite or key not in os.environ:
+            os.environ[key] = str(value)
+    try:
+        yield
+    finally:
+        for key, original in saved.items():
+            if original is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = original
+
+
 class WidgetsMock:
     def __init__(self):
         self._registry: set[str] = set()
@@ -37,9 +58,7 @@ class WidgetsMock:
 
     def dropdown(self, name, default, choices, label=None):
         if default not in choices:
-            raise DbutilsError(
-                f"Default value '{default}' is not in choices {list(choices)}"
-            )
+            raise DbutilsError(f"Default value '{default}' is not in choices {list(choices)}")
         return self._register(name, default)
 
     def combobox(self, name, default, choices, label=None):
@@ -52,9 +71,7 @@ class WidgetsMock:
             selected = [default]
         for value in selected:
             if value not in choices:
-                raise DbutilsError(
-                    f"Default value '{default}' is not in choices {list(choices)}"
-                )
+                raise DbutilsError(f"Default value '{default}' is not in choices {list(choices)}")
         return self._register(name, default)
 
     def get(self, name):
@@ -66,9 +83,7 @@ class WidgetsMock:
         return {name: os.environ[name] for name in self._registry}
 
     def getArgument(self, name, optional=None):
-        if name in self._registry:
-            return self.get(name)
-        if optional is not None:
+        if name not in self._registry and optional is not None:
             return str(optional)
         return self.get(name)
 

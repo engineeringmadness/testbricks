@@ -1,11 +1,5 @@
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
 import pytest
 
-from testbricks.dbutils import configure, dbutils
 from testbricks.notebook_executor import (
     transform_fs_commands,
     transform_run_commands,
@@ -48,13 +42,6 @@ class TestTransformFsCommands:
         assert "__run_notebook__('./helpers/setup')" in transformed
         assert "__run_shell__('echo hi', fail_on_error=False)" in transformed
         assert "dbutils.fs.ls('dbfs:/')" in transformed
-
-
-@pytest.fixture
-def notebook_executor(tmp_path):
-    configure(str(tmp_path), source_dir=str(tmp_path))
-    yield dbutils.executor
-    dbutils.widgets.removeAll()
 
 
 class TestExecFileFsMagic:

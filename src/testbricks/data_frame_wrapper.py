@@ -4,7 +4,7 @@ from pyspark.sql import DataFrame
 from pyspark.sql.group import GroupedData
 from pyspark.sql.utils import AnalysisException
 
-from .catalog import TableIdentifier
+from .catalog import TableIdentifier, normalize_csv_options, option_flag
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,16 @@ def _resolve_file_format(fmt) -> str:
             "Supported formats: parquet, json, csv, delta (delta is stored as parquet)."
         )
     return resolved
+
+
+def _flatten_columns(cols):
+    flattened = []
+    for col in cols:
+        if isinstance(col, (list, tuple)):
+            flattened.extend(col)
+        else:
+            flattened.append(col)
+    return flattened
 
 
 class _IoBuilder:
@@ -57,7 +67,7 @@ class DataFrameReader(_IoBuilder):
     def table(self, table_name):
         ident = TableIdentifier.parse(table_name)
         merged = {"header": "true", "inferSchema": "true", **self._options}
-        df = self._spark._catalog.read_csv(ident, merged)
+        df = self._spark.read_table(ident, merged)
         return DataFrameWrapper(self._spark, df)
 
 
@@ -71,24 +81,32 @@ class DataFrameWriter(_IoBuilder):
         self._bucket_by = None
         self._sort_by = ()
 
+    @classmethod
+    def _for_table_write(
+        cls,
+        spark_proxy,
+        dataframe,
+        *,
+        mode,
+        format=None,
+        options=None,
+        partition_by=(),
+    ):
+        writer = cls(spark_proxy, dataframe)
+        writer._mode = mode
+        writer._format = format
+        writer._partition_by = tuple(partition_by)
+        if options:
+            writer._options.update(options)
+        return writer
+
     def partitionBy(self, *cols):
-        flattened = []
-        for col in cols:
-            if isinstance(col, (list, tuple)):
-                flattened.extend(col)
-            else:
-                flattened.append(col)
-        self._partition_by = tuple(flattened)
+        self._partition_by = tuple(_flatten_columns(cols))
         return self
 
     def bucketBy(self, numBuckets, *cols):
         """Accepted no-op: Hive-style bucketing is not simulated locally."""
-        flattened = []
-        for col in cols:
-            if isinstance(col, (list, tuple)):
-                flattened.extend(col)
-            else:
-                flattened.append(col)
+        flattened = _flatten_columns(cols)
         self._bucket_by = (numBuckets, tuple(flattened))
         logger.info(
             "bucketBy(%s, %s) is accepted but not simulated",
@@ -99,9 +117,8 @@ class DataFrameWriter(_IoBuilder):
 
     def sortBy(self, col, *cols):
         """Accepted no-op: sortBy is not simulated locally."""
-        flattened = [col, *cols]
-        self._sort_by = tuple(flattened)
-        logger.info("sortBy(%s) is accepted but not simulated", flattened)
+        self._sort_by = tuple([col, *cols])
+        logger.info("sortBy(%s) is accepted but not simulated", [col, *cols])
         return self
 
     def mode(self, save_mode):
@@ -109,20 +126,20 @@ class DataFrameWriter(_IoBuilder):
         return self
 
     def csv(self, path):
-        self._native_writer().csv(self._spark._get_full_path(path))
+        self._native_writer().csv(self._spark.full_path(path))
 
     def parquet(self, path):
-        self._native_writer().parquet(self._spark._get_full_path(path))
+        self._native_writer().parquet(self._spark.full_path(path))
 
     def json(self, path):
-        self._native_writer().json(self._spark._get_full_path(path))
+        self._native_writer().json(self._spark.full_path(path))
 
     def save(self, path, format=None, **options):
         if options:
             self._options.update(options)
         fmt = format or self._format or "parquet"
         resolved = _resolve_file_format(fmt)
-        full_path = self._spark._get_full_path(path)
+        full_path = self._spark.full_path(path)
         writer = self._native_writer()
         if resolved == "csv":
             writer.csv(full_path)
@@ -158,49 +175,28 @@ class DataFrameWriter(_IoBuilder):
     def _replace_where(self):
         return self._options.get("replaceWhere") or self._options.get("replacewhere")
 
-    def _csv_options(self):
-        return {
-            key: value
-            for key, value in self._options.items()
-            if key.lower()
-            in {
-                "delimiter",
-                "sep",
-                "quote",
-                "escape",
-                "nullvalue",
-                "dateformat",
-                "timestampformat",
-                "header",
-            }
-        }
-
-    def _option_flag(self, *names):
-        wanted = {name.lower() for name in names}
-        for key, value in self._options.items():
-            if key.lower() in wanted:
-                return str(value).lower() in {"true", "1", "yes"}
-        return False
+    def _save_to_table(self, ident, mode):
+        self._spark.save_table(
+            ident,
+            self._dataframe,
+            mode=mode,
+            header=self._header_flag(),
+            replace_where=self._replace_where(),
+            csv_options=normalize_csv_options(self._options),
+            overwrite_schema=option_flag(self._options, "overwriteSchema"),
+            merge_schema=option_flag(self._options, "mergeSchema"),
+        )
 
     def saveAsTable(self, table_name):
         ident = TableIdentifier.parse(table_name)
         self._validate_partition_columns()
-        self._spark._catalog.save_dataframe(
-            ident,
-            self._dataframe,
-            mode=self._mode,
-            header=self._header_flag(),
-            replace_where=self._replace_where(),
-            csv_options=self._csv_options(),
-            overwrite_schema=self._option_flag("overwriteSchema"),
-            merge_schema=self._option_flag("mergeSchema"),
-        )
+        self._save_to_table(ident, self._mode)
 
     def insertInto(self, table_name, overwrite=False):
         """Append or overwrite rows in an existing table (Spark DataFrameWriter.insertInto)."""
         ident = TableIdentifier.parse(table_name)
         self._validate_partition_columns()
-        if not self._spark._catalog.exists(ident):
+        if not self._spark.catalog.exists(ident):
             raise AnalysisException(
                 f"[TABLE_OR_VIEW_NOT_FOUND] The table or view {ident} cannot be found. "
                 "Verify the table exists before calling insertInto."
@@ -210,19 +206,10 @@ class DataFrameWriter(_IoBuilder):
             mode = "overwrite"
         else:
             mode = "append"
-        self._spark._catalog.save_dataframe(
-            ident,
-            self._dataframe,
-            mode=mode,
-            header=self._header_flag(),
-            replace_where=self._replace_where(),
-            csv_options=self._csv_options(),
-            overwrite_schema=self._option_flag("overwriteSchema"),
-            merge_schema=self._option_flag("mergeSchema"),
-        )
+        self._save_to_table(ident, mode)
 
 
-class DataFrameWriterV2:
+class DataFrameWriterV2(_IoBuilder):
     """Minimal Spark DataFrameWriterV2 façade over ``saveAsTable``.
 
     Implements ``create`` / ``replace`` / ``append``. Full V2 verbs such as
@@ -231,53 +218,46 @@ class DataFrameWriterV2:
     """
 
     def __init__(self, spark_proxy, dataframe, table_name):
+        super().__init__()
         self._spark = spark_proxy
         self._dataframe = dataframe
         self._table_name = table_name
-        self._options = {}
         self._partitioned_by = ()
-        self._using = None
 
     def using(self, provider):
-        self._using = provider
-        return self
-
-    def option(self, key, value):
-        self._options[key] = value
-        return self
-
-    def options(self, **kwargs):
-        self._options.update(kwargs)
+        self._format = provider
         return self
 
     def tableProperty(self, property, value):
         return self
 
     def partitionedBy(self, *cols):
-        flattened = []
-        for col in cols:
-            if isinstance(col, (list, tuple)):
-                flattened.extend(col)
-            else:
-                flattened.append(col)
-        self._partitioned_by = tuple(flattened)
+        self._partitioned_by = tuple(_flatten_columns(cols))
         return self
 
     def _writer(self, mode):
-        writer = DataFrameWriter(self._spark, self._dataframe)
-        writer._mode = mode
-        writer._format = self._using
-        writer._partition_by = self._partitioned_by
-        writer._options.update(self._options)
-        return writer
+        return DataFrameWriter._for_table_write(
+            self._spark,
+            self._dataframe,
+            mode=mode,
+            format=self._format,
+            options=self._options,
+            partition_by=self._partitioned_by,
+        )
 
     def create(self):
         self._writer("error").saveAsTable(self._table_name)
 
     def replace(self):
-        writer = self._writer("overwrite")
-        writer._options.setdefault("overwriteSchema", "true")
-        writer.saveAsTable(self._table_name)
+        options = {"overwriteSchema": "true", **self._options}
+        DataFrameWriter._for_table_write(
+            self._spark,
+            self._dataframe,
+            mode="overwrite",
+            format=self._format,
+            options=options,
+            partition_by=self._partitioned_by,
+        ).saveAsTable(self._table_name)
 
     def append(self):
         self._writer("append").saveAsTable(self._table_name)

@@ -1,7 +1,4 @@
-import sys
 import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 
@@ -106,10 +103,7 @@ class TestSqlRewrite:
     def test_rewrites_from_and_join(self):
         from testbricks.catalog import rewrite_from_join_identifiers
 
-        query = (
-            "SELECT * FROM bronze.customers c "
-            "JOIN silver.orders o ON c.id = o.customer_id"
-        )
+        query = "SELECT * FROM bronze.customers c JOIN silver.orders o ON c.id = o.customer_id"
         rewritten = rewrite_from_join_identifiers(query)
         assert "FROM bronze_customers c" in rewritten
         assert "JOIN silver_orders o" in rewritten
@@ -166,9 +160,6 @@ class TestCatalogFacade:
 
         filtered = spark_proxy.catalog.listTables(pattern="peo*")
         assert [table.name for table in filtered] == ["people"]
-        assert [db.name for db in spark_proxy.catalog.listDatabases(pattern="def*")] == [
-            "default"
-        ]
+        assert [db.name for db in spark_proxy.catalog.listDatabases(pattern="def*")] == ["default"]
         ident = TableIdentifier.parse("default.people")
         assert spark_proxy.catalog.exists(ident)
-

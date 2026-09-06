@@ -16,30 +16,24 @@ class FsMock:
     def __getattr__(self, name):
         return NoOpModule()
 
-    def help(self, command=None):
-        return True
-
     def cp(self, from_path, to_path, recurse=False):
         source = self._resolve(from_path)
         destination = self._resolve(to_path)
+        source_is_dir = os.path.isdir(source)
 
         def _copy():
-            if os.path.isdir(source):
+            if source_is_dir:
                 if not recurse:
-                    raise DbutilsError(
-                        f"source is a directory and recurse is False: {from_path}"
-                    )
+                    raise DbutilsError(f"source is a directory and recurse is False: {from_path}")
                 if os.path.exists(destination):
                     raise DbutilsError(f"destination already exists: {to_path}")
             self._ensure_parent(destination)
-            if os.path.isdir(source):
+            if source_is_dir:
                 shutil.copytree(source, destination)
             else:
                 shutil.copy2(source, destination)
 
-        return self._os_call(
-            f"failed to copy {from_path} to {to_path}", _copy
-        )
+        return self._os_call(f"failed to copy {from_path} to {to_path}", _copy)
 
     def mv(self, from_path, to_path, recurse=False):
         self.cp(from_path, to_path, recurse=recurse)
@@ -55,7 +49,7 @@ class FsMock:
             elif os.path.isdir(target):
                 shutil.rmtree(target) if recurse else os.rmdir(target)
             else:
-                raise FileNotFoundError(target)
+                raise DbutilsError(f"failed to remove {path}")
 
         return self._os_call(f"failed to remove {path}", _remove)
 
@@ -122,6 +116,6 @@ class FsMock:
             action()
         except DbutilsError:
             raise
-        except (OSError, FileNotFoundError) as exc:
+        except OSError as exc:
             raise DbutilsError(message) from exc
         return True

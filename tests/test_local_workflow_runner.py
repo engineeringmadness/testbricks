@@ -1,14 +1,10 @@
-import sys
+import json
 import os
 
-# Ensure src is on the path so `testbricks` can be imported during pytest collection.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
-import json
 import pytest
 
+from testbricks.dbutils import DbutilsError
 from testbricks.local_workflow_runner import LocalWorkflowRunner, transform_run_commands
-
 
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
 WORKFLOW_SAMPLE_PATH = os.path.join(ROOT_DIR, "tests", "data", "workflow_sample.json")
@@ -136,8 +132,7 @@ class TestWorkflowExecution:
         source_dir.mkdir()
         marker = tmp_path / "seeded.txt"
         (source_dir / "main.py").write_text(
-            'import os\n'
-            f'with open(r"{marker}", "w") as f: f.write(os.environ["mode"])\n',
+            f'import os\nwith open(r"{marker}", "w") as f: f.write(os.environ["mode"])\n',
             encoding="utf-8",
         )
 
@@ -165,8 +160,7 @@ class TestWorkflowExecution:
         source_dir.mkdir()
         marker = tmp_path / "preserved.txt"
         (source_dir / "main.py").write_text(
-            'import os\n'
-            f'with open(r"{marker}", "w") as f: f.write(os.environ["mode"])\n',
+            f'import os\nwith open(r"{marker}", "w") as f: f.write(os.environ["mode"])\n',
             encoding="utf-8",
         )
 
@@ -186,9 +180,7 @@ class TestWorkflowExecution:
 
         os.environ["mode"] = "from_test"
         try:
-            runner = LocalWorkflowRunner(
-                str(source_dir), str(workflow_path), str(tmp_path)
-            )
+            runner = LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
             runner.run_workflow()
         finally:
             os.environ.pop("mode", None)
@@ -299,18 +291,19 @@ def _write_notebooks(source_dir, mapping):
         (source_dir / f"{name}.py").write_text(body, encoding="utf-8")
 
 
-class TestRunIfConditions:
-    def _runner(self, tmp_path, tasks, notebooks):
-        source_dir = tmp_path / "local_src"
-        source_dir.mkdir()
-        _write_notebooks(source_dir, notebooks)
-        workflow_path = tmp_path / "workflow.json"
-        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
-        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
+def _runner(tmp_path, tasks, notebooks):
+    source_dir = tmp_path / "local_src"
+    source_dir.mkdir()
+    _write_notebooks(source_dir, notebooks)
+    workflow_path = tmp_path / "workflow.json"
+    workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
+    return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
 
+
+class TestRunIfConditions:
     def test_all_success_skips_when_dependency_fails(self, tmp_path):
         log_file = tmp_path / "execution.log"
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -337,7 +330,7 @@ class TestRunIfConditions:
 
     def test_all_failed_runs_when_dependency_fails(self, tmp_path):
         log_file = tmp_path / "execution.log"
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -364,7 +357,7 @@ class TestRunIfConditions:
 
     def test_all_failed_skips_when_dependency_succeeds(self, tmp_path):
         log_file = tmp_path / "execution.log"
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -390,7 +383,7 @@ class TestRunIfConditions:
 
     def test_all_done_runs_after_failed_dependency(self, tmp_path):
         log_file = tmp_path / "execution.log"
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -415,7 +408,7 @@ class TestRunIfConditions:
         assert log_file.read_text(encoding="utf-8").splitlines() == ["always"]
 
     def test_none_failed_skips_when_dependency_fails(self, tmp_path):
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -436,7 +429,7 @@ class TestRunIfConditions:
         assert runner.task_statuses["next"] == "SKIPPED"
 
     def test_none_failed_runs_when_dependency_skipped(self, tmp_path):
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -469,7 +462,7 @@ class TestRunIfConditions:
 
     def test_at_least_one_success_runs_if_any_dep_succeeded(self, tmp_path):
         log_file = tmp_path / "execution.log"
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -502,7 +495,7 @@ class TestRunIfConditions:
         assert log_file.read_text(encoding="utf-8").splitlines() == ["join"]
 
     def test_depends_on_outcome_skips_when_status_does_not_match(self, tmp_path):
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -537,17 +530,9 @@ class TestRunIfConditions:
 
 
 class TestConditionTasks:
-    def _runner(self, tmp_path, tasks, notebooks):
-        source_dir = tmp_path / "local_src"
-        source_dir.mkdir()
-        _write_notebooks(source_dir, notebooks)
-        workflow_path = tmp_path / "workflow.json"
-        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
-        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
-
     def test_true_branch_runs_and_false_branch_skipped(self, tmp_path):
         log_file = tmp_path / "execution.log"
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -589,7 +574,7 @@ class TestConditionTasks:
 
     def test_false_branch_runs_when_condition_fails(self, tmp_path):
         log_file = tmp_path / "execution.log"
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -630,7 +615,7 @@ class TestConditionTasks:
 
     def test_greater_than_compares_numerically(self, tmp_path):
         log_file = tmp_path / "execution.log"
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -662,7 +647,7 @@ class TestConditionTasks:
         assert log_file.read_text(encoding="utf-8").splitlines() == ["true"]
 
     def test_condition_task_without_notebook_file(self, tmp_path):
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -689,17 +674,9 @@ class TestConditionTasks:
 
 
 class TestForEachTasks:
-    def _runner(self, tmp_path, tasks, notebooks):
-        source_dir = tmp_path / "local_src"
-        source_dir.mkdir()
-        _write_notebooks(source_dir, notebooks)
-        workflow_path = tmp_path / "workflow.json"
-        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
-        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
-
     def test_runs_nested_notebook_once_per_input(self, tmp_path):
         log_file = tmp_path / "execution.log"
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -730,7 +707,7 @@ class TestForEachTasks:
 
     def test_inputs_from_task_values_json_list(self, tmp_path):
         log_file = tmp_path / "execution.log"
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -765,7 +742,7 @@ class TestForEachTasks:
 
     def test_child_failure_fails_for_each_task(self, tmp_path):
         log_file = tmp_path / "execution.log"
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -799,7 +776,7 @@ class TestForEachTasks:
 
     def test_literal_list_inputs(self, tmp_path):
         log_file = tmp_path / "execution.log"
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -828,14 +805,6 @@ class TestForEachTasks:
 
 
 class TestRepairAndRerun:
-    def _runner(self, tmp_path, tasks, notebooks):
-        source_dir = tmp_path / "local_src"
-        source_dir.mkdir()
-        _write_notebooks(source_dir, notebooks)
-        workflow_path = tmp_path / "workflow.json"
-        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
-        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
-
     def test_only_runs_selected_tasks(self, tmp_path):
         log_file = tmp_path / "execution.log"
         tasks = [
@@ -858,7 +827,7 @@ class TestRepairAndRerun:
             name: f'with open(r"{log_file}", "a") as f: f.write("{name}\\n")\n'
             for name in ["first", "second", "third"]
         }
-        runner = self._runner(tmp_path, tasks, notebooks)
+        runner = _runner(tmp_path, tasks, notebooks)
         runner.run_workflow(only=["second_task"])
         assert log_file.read_text(encoding="utf-8").splitlines() == ["second"]
         assert runner.task_statuses["second_task"] == "SUCCESS"
@@ -885,12 +854,12 @@ class TestRepairAndRerun:
             name: f'with open(r"{log_file}", "a") as f: f.write("{name}\\n")\n'
             for name in ["first", "second", "third"]
         }
-        runner = self._runner(tmp_path, tasks, notebooks)
+        runner = _runner(tmp_path, tasks, notebooks)
         runner.run_workflow(from_task="second_task")
         assert log_file.read_text(encoding="utf-8").splitlines() == ["second", "third"]
 
     def test_unknown_only_task_raises(self, tmp_path):
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -904,7 +873,7 @@ class TestRepairAndRerun:
             runner.run_workflow(only=["missing"])
 
     def test_only_and_from_task_are_exclusive(self, tmp_path):
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -919,18 +888,10 @@ class TestRepairAndRerun:
 
 
 class TestRetriesAndTimeouts:
-    def _runner(self, tmp_path, tasks, notebooks):
-        source_dir = tmp_path / "local_src"
-        source_dir.mkdir()
-        _write_notebooks(source_dir, notebooks)
-        workflow_path = tmp_path / "workflow.json"
-        workflow_path.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
-        return LocalWorkflowRunner(str(source_dir), str(workflow_path), str(tmp_path))
-
     def test_retries_until_success(self, tmp_path):
         counter = tmp_path / "counter.txt"
         counter.write_text("0", encoding="utf-8")
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -956,7 +917,7 @@ class TestRetriesAndTimeouts:
         assert counter.read_text(encoding="utf-8") == "3"
 
     def test_retry_exhaustion_reraises(self, tmp_path):
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -977,7 +938,7 @@ class TestRetriesAndTimeouts:
             "testbricks.local_workflow_runner.time.sleep",
             lambda seconds: slept.append(seconds),
         )
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -994,7 +955,7 @@ class TestRetriesAndTimeouts:
         assert slept == [0.05]
 
     def test_timeout_seconds_accepted_not_enforced(self, tmp_path, capsys):
-        runner = self._runner(
+        runner = _runner(
             tmp_path,
             [
                 {
@@ -1063,9 +1024,7 @@ class TestWorkflowValidation:
     )
     def test_invalid_notebook_path_raises(self, tmp_path, notebook_path):
         workflow = {
-            "tasks": [
-                {"task_key": "t1", "notebook_task": {"notebook_path": notebook_path}}
-            ]
+            "tasks": [{"task_key": "t1", "notebook_task": {"notebook_path": notebook_path}}]
         }
         workflow_path = tmp_path / "workflow.json"
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
@@ -1166,11 +1125,7 @@ class TestWorkflowValidation:
             LocalWorkflowRunner(str(tmp_path), str(workflow_path), str(tmp_path))
 
     def test_missing_notebook_file_raises(self, tmp_path):
-        workflow = {
-            "tasks": [
-                {"task_key": "t1", "notebook_task": {"notebook_path": "/a/missing"}}
-            ]
-        }
+        workflow = {"tasks": [{"task_key": "t1", "notebook_task": {"notebook_path": "/a/missing"}}]}
         workflow_path = tmp_path / "workflow.json"
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
@@ -1213,15 +1168,13 @@ class TestPercentRunCommands:
     def test_run_notebook_executes_percent_run_target(self, tmp_path):
         helpers_dir = tmp_path / "helpers"
         helpers_dir.mkdir()
-        (helpers_dir / "setup.py").write_text(
-            "SHARED_VALUE = 'from_setup'\n", encoding="utf-8"
-        )
+        (helpers_dir / "setup.py").write_text("SHARED_VALUE = 'from_setup'\n", encoding="utf-8")
         main_path = tmp_path / "main.py"
-        main_path.write_text(
-            "# %run ./helpers/setup\nRESULT = SHARED_VALUE\n", encoding="utf-8"
-        )
+        main_path.write_text("# %run ./helpers/setup\nRESULT = SHARED_VALUE\n", encoding="utf-8")
 
-        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path), str(tmp_path))
+        runner = LocalWorkflowRunner(
+            str(tmp_path), _write_single_task_workflow(tmp_path), str(tmp_path)
+        )
         namespace = _notebook_namespace(str(main_path), runner)
 
         runner._execfile(str(main_path), namespace, namespace)
@@ -1236,11 +1189,11 @@ class TestPercentRunCommands:
             "# %run ./common/base\nMIDDLE_VALUE = BASE_VALUE + 1\n", encoding="utf-8"
         )
         main_path = tmp_path / "main.py"
-        main_path.write_text(
-            "# %run ./middle\nRESULT = MIDDLE_VALUE + 1\n", encoding="utf-8"
-        )
+        main_path.write_text("# %run ./middle\nRESULT = MIDDLE_VALUE + 1\n", encoding="utf-8")
 
-        runner = LocalWorkflowRunner(str(tmp_path), _write_single_task_workflow(tmp_path), str(tmp_path))
+        runner = LocalWorkflowRunner(
+            str(tmp_path), _write_single_task_workflow(tmp_path), str(tmp_path)
+        )
         namespace = _notebook_namespace(str(main_path), runner)
 
         runner._execfile(str(main_path), namespace, namespace)
@@ -1250,7 +1203,7 @@ class TestPercentRunCommands:
     def test_empty_percent_run_path_raises(self, tmp_path):
         notebook_path = str(tmp_path / "main.py")
 
-        with pytest.raises(ValueError, match="Empty %run path"):
+        with pytest.raises(DbutilsError, match="Empty %run path"):
             transform_run_commands("# %run   \n", notebook_path)
 
 
@@ -1259,8 +1212,7 @@ class TestTopLevelNotebookExit:
         notebook_path = tmp_path / "main.py"
         marker = tmp_path / "marker.txt"
         notebook_path.write_text(
-            'dbutils.notebook.exit("early")\n'
-            f'open(r"{marker}", "w").write("ran")\n',
+            f'dbutils.notebook.exit("early")\nopen(r"{marker}", "w").write("ran")\n',
             encoding="utf-8",
         )
 

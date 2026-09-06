@@ -1,7 +1,4 @@
-import sys
 import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 
@@ -237,8 +234,7 @@ class TestWorkflowRunnerIntegration:
 
         marker = store_dir / "created_by_dbutils"
         (source_dir / "main.py").write_text(
-            'dbutils.fs.mkdirs("dbfs:/workflow_dir")\n'
-            f'open(r"{marker}", "w").write("ok")\n',
+            f'dbutils.fs.mkdirs("dbfs:/workflow_dir")\nopen(r"{marker}", "w").write("ok")\n',
             encoding="utf-8",
         )
 

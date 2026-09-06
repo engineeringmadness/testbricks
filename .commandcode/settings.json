@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(python -m ruff check src tests 2 >& 1)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

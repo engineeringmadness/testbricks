@@ -6,7 +6,9 @@ import sys
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from testbricks.dbutils.path_resolver import strip_known_prefix
+from testbricks.catalog.identifier import strip_wrappers
+from testbricks.dbutils.errors import DbutilsError
+from testbricks.dbutils.widgets import argument_override_context, seeded_environ
 from testbricks.notebook_exceptions import NotebookExit, ShellCommandError
 
 RUN_COMMAND_PATTERN = re.compile(
@@ -16,22 +18,18 @@ RUN_COMMAND_PATTERN = re.compile(
 SH_START_PATTERN = re.compile(r"^(\s*)#\s*(?:MAGIC\s+)?%sh(?:\s+(.*))?\s*$")
 FS_START_PATTERN = re.compile(r"^(\s*)#\s*(?:MAGIC\s+)?%fs(?:\s+(.*))?\s*$")
 MAGIC_BODY_PATTERN = re.compile(r"^\s*#\s*MAGIC\s+(.*)$")
-WORKSPACE_PREFIXES = ("/Workspace/", "/Repos/")
 
 _caller_file: ContextVar[str | None] = ContextVar("caller_file", default=None)
 
 
 def _strip_matching_quotes(value):
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-        return value[1:-1].strip()
-    return value
+    return strip_wrappers(value, "'\"").strip()
 
 
 def parse_run_path(raw_path, file_path):
     path = _strip_matching_quotes(raw_path)
     if not path:
-        raise ValueError(f"Empty %run path in notebook '{file_path}'")
+        raise DbutilsError(f"Empty %run path in notebook '{file_path}'")
     return path
 
 
@@ -61,6 +59,29 @@ def _parse_sh_remainder(remainder):
     return fail_on_error, inline.strip()
 
 
+def _collect_magic_lines(lines, index):
+    """Collect consecutive ``# MAGIC <body>`` lines starting at ``index``.
+
+    Stops at the first non-magic line or at a body that starts another magic
+    command (``%run``, ``%sh``, ...). Returns ``(bodies, next_index)``.
+    """
+    bodies = []
+    while index < len(lines):
+        body_match = MAGIC_BODY_PATTERN.match(lines[index].rstrip("\n"))
+        if not body_match:
+            break
+        body = body_match.group(1)
+        if body.lstrip().startswith("%"):
+            break
+        bodies.append(body)
+        index += 1
+    return bodies, index
+
+
+def _newline_for(line):
+    return "\n" if line.endswith("\n") else ""
+
+
 def transform_sh_commands(source):
     lines = source.splitlines(keepends=True)
     output = []
@@ -78,20 +99,13 @@ def transform_sh_commands(source):
         started_with_magic = "MAGIC" in line.split("%sh", 1)[0]
         index += 1
         if started_with_magic:
-            while index < len(lines):
-                body_match = MAGIC_BODY_PATTERN.match(lines[index].rstrip("\n"))
-                if not body_match:
-                    break
-                body = body_match.group(1)
-                if body.lstrip().startswith("%"):
-                    break
-                script_lines.append(body)
-                index += 1
+            bodies, index = _collect_magic_lines(lines, index)
+            script_lines.extend(bodies)
         script = "\n".join(script_lines)
         if script.strip():
-            newline = "\n" if line.endswith("\n") else ""
             output.append(
-                f"{indent}__run_shell__({script!r}, fail_on_error={fail_on_error}){newline}"
+                f"{indent}__run_shell__({script!r}, fail_on_error={fail_on_error})"
+                f"{_newline_for(line)}"
             )
     return "".join(output)
 
@@ -125,26 +139,14 @@ def transform_fs_commands(source):
         parts = shlex.split(remainder or "")
         started_with_magic = "MAGIC" in line.split("%fs", 1)[0]
         index += 1
-        extra = []
         if started_with_magic:
-            while index < len(lines):
-                body_match = MAGIC_BODY_PATTERN.match(lines[index].rstrip("\n"))
-                if not body_match:
-                    break
-                body = body_match.group(1)
-                if body.lstrip().startswith("%"):
-                    break
-                extra.append(body)
-                index += 1
-        if extra:
-            extra_text = "\n".join(extra)
-            if extra_text.strip():
-                parts.extend(shlex.split(extra_text))
+            bodies, index = _collect_magic_lines(lines, index)
+            if bodies:
+                parts.extend(shlex.split("\n".join(bodies)))
         if not parts:
             continue
         command, *args = parts
-        newline = "\n" if line.endswith("\n") else ""
-        output.append(f"{indent}{_fs_python_call(command, args)}{newline}")
+        output.append(f"{indent}{_fs_python_call(command, args)}{_newline_for(line)}")
     return "".join(output)
 
 
@@ -197,31 +199,10 @@ class NotebookExecutor:
         return ns
 
     def resolve_path(self, path, caller_file=None):
-        from testbricks.dbutils.errors import DbutilsError
-
-        normalized_path = _strip_matching_quotes(path)
-        if normalized_path.startswith("/"):
-            source_dir = self._dbutils.source_dir
-            if source_dir is None:
-                raise DbutilsError(
-                    "source_dir not configured — required for workspace paths"
-                )
-            remainder = strip_known_prefix(normalized_path, WORKSPACE_PREFIXES).lstrip("/")
-            notebook_path = os.path.join(source_dir, remainder)
-        else:
-            caller_file = caller_file or _caller_file.get()
-            if not caller_file:
-                raise DbutilsError(
-                    "caller file not set — cannot resolve relative notebook path"
-                )
-            notebook_path = os.path.join(os.path.dirname(caller_file), normalized_path)
-
-        notebook_path = os.path.normpath(notebook_path)
-        if not notebook_path.endswith(".py"):
-            notebook_path += ".py"
-        if not os.path.exists(notebook_path):
-            raise DbutilsError(f"Notebook not found: {notebook_path}")
-        return notebook_path
+        return self._dbutils.path_resolver.resolve_notebook(
+            _strip_matching_quotes(path),
+            caller_file if caller_file is not None else _caller_file.get(),
+        )
 
     def exec_file(self, file_path, namespace, *, top_level=False):
         with self.caller_context(file_path):
@@ -245,16 +226,13 @@ class NotebookExecutor:
         self.exec_file(notebook_path, namespace, top_level=False)
 
     def run_isolated(self, path, arguments=None, extra=None):
-        from testbricks.dbutils.widgets import argument_override_context
-
         arguments = arguments or {}
         notebook_path = self.resolve_path(path, caller_file=_caller_file.get())
-        for key, value in arguments.items():
-            os.environ[key] = str(value)
 
         namespace = self.namespace(notebook_path, extra=extra)
         with (
             argument_override_context(arguments.keys()),
+            seeded_environ(arguments),
             self._dbutils.jobs.taskValues.isolated_context(),
         ):
             try:

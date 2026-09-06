@@ -22,6 +22,9 @@ class CatalogFacade:
     def __init__(self, tables: TableCatalog):
         self._tables = tables
 
+    def exists(self, ident: TableIdentifier) -> bool:
+        return self._tables.exists(ident)
+
     def tableExists(self, tableName: str, dbName: Optional[str] = None) -> bool:
         try:
             ident = (
@@ -67,6 +70,3 @@ class CatalogFacade:
             for name in self._tables.iter_schema_names()
             if _matches(name, pattern)
         ]
-
-    def __getattr__(self, name):
-        return getattr(self._tables, name)

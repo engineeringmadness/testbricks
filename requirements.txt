@@ -5,3 +5,6 @@ pyarrow
 numpy
 py4j
 coverage
+ruff
+mypy
+pytest-timeout
