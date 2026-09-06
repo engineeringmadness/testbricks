@@ -5,15 +5,19 @@ Drop-in files for `engineeringmadness/testbricks-website` (this library repo can
 - `docs/website/index.html` → website `index.html`
 - `docs/website/App.tsx` → website `src/App.tsx`
 
-The live site still uses `SparkMock` and undersells Lakeflow / `dbutils` coverage from master.
+The live site still uses the old `SparkMock` name in examples. Marketing copy stays high-level; the code tabs show the current API.
 
 ## Meta (`index.html`)
 
 **title:** `testbricks — Run Databricks workflows locally`
 
-**description / og:description:**
+**description:**
 
-> testbricks runs Databricks workflows on your laptop: SparkProxy maps `schema.table` to local CSV, a drop-in dbutils (widgets, fs, secrets, notebook, taskValues), and a workflow runner with DAG, run_if, and repair-and-rerun.
+> testbricks runs Databricks workflows on your laptop with a Spark proxy, a drop-in dbutils, and a workflow runner.
+
+**og:description:**
+
+> Run Databricks workflows on your laptop with SparkProxy, a dbutils mock, and a JSON workflow runner.
 
 ## Hero
 
@@ -21,43 +25,43 @@ The live site still uses `SparkMock` and undersells Lakeflow / `dbutils` coverag
 
 **body:**
 
-> testbricks is a Python library with genuinely useful mocks — SparkProxy routes `spark.read.table` / `saveAsTable` to CSV on disk, a drop-in `dbutils` for widgets, files, secrets, notebooks, and task values, and a runner that executes a whole workflow JSON (DAG, `run_if`, and repair-and-rerun). No cluster. No waiting around.
+> testbricks is a Python library with genuinely useful mocks — a Spark proxy that reads and writes tables as CSV, a drop-in `dbutils` replacement, and a runner that executes a whole workflow JSON in dependency order. No cluster. No waiting around.
 
 **install:** `pip install testbricks`
 
-**fine print:** `Python 3.10+ · JDK on PATH for PySpark · notebooks, scripts and CI`
+**fine print:** `Python 3.10+ · works in notebooks, scripts and CI`
 
 ## Features
 
 **SparkProxy**
 
-> A SparkSession stand-in that speaks the same API. Catalog tables are `{base_path}/{schema}/{table}.csv`; file writes (`parquet` / `json` / `csv`) use native Spark under that folder. `format("delta").save` is parquet on disk — no cluster, no metastore.
+> A SparkSession stand-in that speaks the same API. Table reads and writes land as CSV files on disk — no cluster, no metastore, no waiting.
 
 **Drop-in dbutils**
 
-> Widgets (including combobox, multiselect, getAll), fs (`ls` / `put` / `cp` / `mv` / `rm` / `mkdirs`), secrets, notebook (`run` / `exit`), `jobs.taskValues`, `library.restartPython`, and `data.summarize`. `%run`, `%sh`, and `%fs` magics work in notebooks the runner executes.
+> Widgets, filesystem helpers, secrets, and more. Import it instead of the real thing and your notebook runs unchanged.
 
 **Workflow runner**
 
-> Parses a Databricks / Lakeflow workflow JSON, walks the task graph, and runs notebooks in order. Understands `run_if` and `depends_on` outcomes, `condition_task`, `for_each_task`, retries, taskValues, and repair-and-rerun (`only` / `from_task`).
+> Parses a Databricks workflow JSON, builds the task graph, and runs notebooks in the right order on your machine.
 
 **Zero cluster time**
 
-> Iterate in seconds on your laptop. Debug with breakpoints, run it in CI, and keep your compute bill for the things that matter. (unchanged)
+> Iterate in seconds on your laptop. Debug with breakpoints, run it in CI, and keep your compute bill for the things that matter.
 
 ## How it works
 
-1. **Swap in the mocks** — Use `SparkProxy` instead of a cluster `SparkSession`. Import `dbutils` from `testbricks.dbutils` (the runner injects it into notebooks).
-2. **Drop your data in a folder** — CSV files at `{base_path}/{schema}/{table}.csv` stand in for Unity Catalog tables. Read, write, and inspect them with any tool you like.
-3. **Run the whole workflow** — Hand the runner your workflow JSON. It walks the DAG, honors `run_if` / condition / for_each, and re-runs a subgraph with `only` or `from_task`.
+1. **Swap in the mocks** — Replace the Spark session and dbutils object with the testbricks equivalents at the top of your notebook.
+2. **Drop your data in a folder** — CSV files in a base directory stand in for your tables. Read, write and inspect them with any tool you like.
+3. **Run the whole workflow** — Hand the runner your workflow JSON and it walks the dependency graph, notebook by notebook, right on your machine.
 
 ## Code examples (`SNIPPETS` in `App.tsx`)
 
-Rename the first tab from `SparkMock` to `SparkProxy`. Update the Prism comment that still says `SparkMock(...)`.
+First tab label: `SparkProxy` (not `SparkMock`).
 
 ### SparkProxy
 
-**blurb:** Point it at a folder. `schema.table` reads and writes land as `{schema}/{table}.csv` you can open anywhere.
+**blurb:** Point it at a folder. Table reads and writes land as plain CSV files you can open anywhere.
 
 ```python
 from testbricks import SparkProxy
@@ -70,7 +74,7 @@ df.write.mode("overwrite").saveAsTable("silver.customers_enriched")
 
 ### dbutils
 
-**blurb:** Drop-in Databricks `dbutils`: widgets, fs, secrets, notebook, and `jobs.taskValues`. Notebooks the runner executes get it automatically.
+**blurb:** A drop-in replacement for the Databricks dbutils object. Notebooks the runner executes get it automatically.
 
 ```python
 from testbricks.dbutils import configure, dbutils
@@ -86,7 +90,7 @@ for info in dbutils.fs.ls("/"):
 
 ### LocalWorkflowRunner
 
-**blurb:** Feed it an exported workflow JSON. It resolves the DAG and runs every notebook in order — including repair-and-rerun with `only` or `from_task`.
+**blurb:** Feed it your exported workflow JSON. It resolves the task graph and runs every notebook in dependency order.
 
 ```python
 from testbricks import SparkProxy, LocalWorkflowRunner
@@ -98,5 +102,4 @@ runner = LocalWorkflowRunner(
     base_path="./data",
 )
 runner.run_workflow(extra_globals={"spark": spark})
-# runner.run_workflow(extra_globals={"spark": spark}, only=["build_summary"])
 ```

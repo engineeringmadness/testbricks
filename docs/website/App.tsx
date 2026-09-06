@@ -30,7 +30,7 @@ const SNIPPETS: Snippet[] = [
     id: "spark",
     label: "SparkProxy",
     blurb:
-      "Point it at a folder. schema.table reads and writes land as {schema}/{table}.csv you can open anywhere.",
+      "Point it at a folder. Table reads and writes land as plain CSV files you can open anywhere.",
     code: `from testbricks import SparkProxy
 
 spark = SparkProxy("./data")
@@ -42,7 +42,7 @@ df.write.mode("overwrite").saveAsTable("silver.customers_enriched")`,
     id: "dbutils",
     label: "dbutils",
     blurb:
-      "Drop-in Databricks dbutils: widgets, fs, secrets, notebook, and jobs.taskValues. Notebooks the runner executes get it automatically.",
+      "A drop-in replacement for the Databricks dbutils object. Notebooks the runner executes get it automatically.",
     code: `from testbricks.dbutils import configure, dbutils
 
 configure("./data")  # same catalog root as SparkProxy
@@ -57,7 +57,7 @@ for info in dbutils.fs.ls("/"):
     id: "runner",
     label: "LocalWorkflowRunner",
     blurb:
-      "Feed it an exported workflow JSON. It resolves the DAG and runs every notebook in order — including repair-and-rerun with only or from_task.",
+      "Feed it your exported workflow JSON. It resolves the task graph and runs every notebook in dependency order.",
     code: `from testbricks import SparkProxy, LocalWorkflowRunner
 
 spark = SparkProxy("./data")
@@ -66,8 +66,7 @@ runner = LocalWorkflowRunner(
     workflow_json_path="./workflow.json",
     base_path="./data",
 )
-runner.run_workflow(extra_globals={"spark": spark})
-# runner.run_workflow(extra_globals={"spark": spark}, only=["build_summary"])`,
+runner.run_workflow(extra_globals={"spark": spark})`,
   },
 ];
 
@@ -75,17 +74,17 @@ const FEATURES = [
   {
     icon: Database,
     title: "SparkProxy",
-    body: "A SparkSession stand-in that speaks the same API. Catalog tables are {base_path}/{schema}/{table}.csv; file writes (parquet / json / csv) use native Spark under that folder. format(\"delta\").save is parquet on disk — no cluster, no metastore.",
+    body: "A SparkSession stand-in that speaks the same API. Table reads and writes land as CSV files on disk — no cluster, no metastore, no waiting.",
   },
   {
     icon: FileSpreadsheet,
     title: "Drop-in dbutils",
-    body: "Widgets (including combobox, multiselect, getAll), fs (ls / put / cp / mv / rm / mkdirs), secrets, notebook (run / exit), jobs.taskValues, library.restartPython, and data.summarize. %run, %sh, and %fs magics work in notebooks the runner executes.",
+    body: "Widgets, filesystem helpers, secrets, and more. Import it instead of the real thing and your notebook runs unchanged.",
   },
   {
     icon: Workflow,
     title: "Workflow runner",
-    body: "Parses a Databricks / Lakeflow workflow JSON, walks the task graph, and runs notebooks in order. Understands run_if and depends_on outcomes, condition_task, for_each_task, retries, taskValues, and repair-and-rerun (only / from_task).",
+    body: "Parses a Databricks workflow JSON, builds the task graph, and runs notebooks in the right order on your machine.",
   },
   {
     icon: Laptop,
@@ -98,17 +97,17 @@ const STEPS = [
   {
     n: "01",
     title: "Swap in the mocks",
-    body: "Use SparkProxy instead of a cluster SparkSession. Import dbutils from testbricks.dbutils (the runner injects it into notebooks).",
+    body: "Replace the Spark session and dbutils object with the testbricks equivalents at the top of your notebook.",
   },
   {
     n: "02",
     title: "Drop your data in a folder",
-    body: "CSV files at {base_path}/{schema}/{table}.csv stand in for Unity Catalog tables. Read, write, and inspect them with any tool you like.",
+    body: "CSV files in a base directory stand in for your tables. Read, write and inspect them with any tool you like.",
   },
   {
     n: "03",
     title: "Run the whole workflow",
-    body: "Hand the runner your workflow JSON. It walks the DAG, honors run_if / condition / for_each, and re-runs a subgraph with only or from_task.",
+    body: "Hand the runner your workflow JSON and it walks the dependency graph, notebook by notebook, right on your machine.",
   },
 ];
 
@@ -261,15 +260,11 @@ function Hero() {
         </h1>
 
         <p className="mt-6 max-w-2xl text-lg leading-relaxed text-muted-foreground">
-          testbricks is a Python library with genuinely useful mocks — SparkProxy routes{" "}
-          <code className="font-mono text-[0.92em] text-foreground">spark.read.table</code> /{" "}
-          <code className="font-mono text-[0.92em] text-foreground">saveAsTable</code> to CSV on
-          disk, a drop-in{" "}
-          <code className="font-mono text-[0.92em] text-foreground">dbutils</code> for widgets,
-          files, secrets, notebooks, and task values, and a runner that executes a whole workflow
-          JSON (DAG,{" "}
-          <code className="font-mono text-[0.92em] text-foreground">run_if</code>, and
-          repair-and-rerun). No cluster. No waiting around.
+          testbricks is a Python library with genuinely useful mocks — a Spark proxy that reads and
+          writes tables as CSV, a drop-in{" "}
+          <code className="font-mono text-[0.92em] text-foreground">dbutils</code> replacement, and
+          a runner that executes a whole workflow JSON in dependency order. No cluster. No waiting
+          around.
         </p>
 
         <div className="mt-9 flex flex-wrap items-center gap-3">
@@ -299,7 +294,7 @@ function Hero() {
         </div>
 
         <p className="mt-6 text-sm text-muted-foreground">
-          Python 3.10+ · JDK on PATH for PySpark · notebooks, scripts and CI
+          Python 3.10+ · works in notebooks, scripts and CI
         </p>
       </div>
     </section>
