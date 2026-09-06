@@ -5,9 +5,7 @@ from contextvars import ContextVar
 from .errors import DbutilsError
 
 _MISSING = object()
-_current_task_key: ContextVar[str | None] = ContextVar(
-    "task_values_current_task", default=None
-)
+_current_task_key: ContextVar[str | None] = ContextVar("task_values_current_task", default=None)
 
 
 def _stringify(value):
@@ -97,9 +95,7 @@ class TaskValuesStore:
             return _stringify(debugValue)
         if default is not _MISSING:
             return _stringify(default)
-        raise DbutilsError(
-            f"Task value '{key}' not found for task '{resolved_task}'"
-        )
+        raise DbutilsError(f"Task value '{key}' not found for task '{resolved_task}'")
 
 
 class JobsMock:

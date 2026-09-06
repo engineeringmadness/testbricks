@@ -1,5 +1,5 @@
 from .dbutils_mock import DbutilsMock
-from .errors import DbutilsError
+from .errors import DbutilsError as DbutilsError
 
 dbutils = DbutilsMock()
 

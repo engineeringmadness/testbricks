@@ -1,15 +1,10 @@
 import os
 import shutil
-import sys
-
-# Ensure src is on the path so `testbricks` can be imported during pytest collection.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import pytest
 
 from testbricks.local_workflow_runner import LocalWorkflowRunner
 from testbricks.spark_proxy import SparkProxy
-
 
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(TEST_DIR, "data")
@@ -40,20 +35,29 @@ def test_e2e_workflow_runs_full_pipeline(e2e_env):
     runner.run_workflow(extra_globals={"spark": spark})
 
     # NB1: USA filter → 3 customers (Alice, Charlie, Eve)
-    customers = spark.read.option("header", "true").option("inferSchema", "true") \
+    customers = (
+        spark.read.option("header", "true")
+        .option("inferSchema", "true")
         .table("silver.customers_enriched")
+    )
     assert customers.count() == 3
     assert {r.name for r in customers.collect()} == {"Alice", "Charlie", "Eve"}
 
     # NB2: amount >= 100 → 4 orders (101, 103, 105, 107)
-    orders = spark.read.option("header", "true").option("inferSchema", "true") \
+    orders = (
+        spark.read.option("header", "true")
+        .option("inferSchema", "true")
         .table("silver.orders_enriched")
+    )
     assert orders.count() == 4
     assert {r.order_id for r in orders.collect()} == {101, 103, 105, 107}
 
     # NB3: inner join → Alice(370.0), Eve(300.0); Charlie dropped (no qualifying orders)
-    summary = spark.read.option("header", "true").option("inferSchema", "true") \
+    summary = (
+        spark.read.option("header", "true")
+        .option("inferSchema", "true")
         .table("gold.customer_order_summary")
+    )
     rows = summary.collect()
     assert len(rows) == 2
     assert rows[0].name == "Alice" and float(rows[0].total_amount) == 370.0

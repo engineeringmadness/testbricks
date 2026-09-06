@@ -29,16 +29,16 @@ class SecretsMock:
     def get(self, scope, key):
         env_name = _secret_env_name(scope, key)
         if env_name not in os.environ:
-            raise DbutilsError(
-                f"Secret for scope '{scope}' and key '{key}' does not exist"
-            )
+            raise DbutilsError(f"Secret for scope '{scope}' and key '{key}' does not exist")
         return os.environ[env_name]
 
     def getBytes(self, scope, key):
         return self.get(scope, key).encode("utf-8")
 
     def list(self, scope):
-        keys = sorted({key for listed_scope, key in _iter_secret_entries() if listed_scope == scope})
+        keys = sorted(
+            {key for listed_scope, key in _iter_secret_entries() if listed_scope == scope}
+        )
         return [SecretMetadata(key=key) for key in keys]
 
     def listScopes(self):

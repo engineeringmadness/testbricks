@@ -1,7 +1,4 @@
-import sys
 import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 
@@ -21,16 +18,12 @@ class TestTaskValuesSetGet:
     def test_set_and_get_within_current_task(self):
         with dbutils.jobs.taskValues.current_task("producer"):
             dbutils.jobs.taskValues.set(key="region", value="eu")
-            assert (
-                dbutils.jobs.taskValues.get(taskKey="producer", key="region") == "eu"
-            )
+            assert dbutils.jobs.taskValues.get(taskKey="producer", key="region") == "eu"
 
     def test_get_task_key_alias(self):
         with dbutils.jobs.taskValues.current_task("producer"):
             dbutils.jobs.taskValues.set(key="region", value="eu")
-            assert (
-                dbutils.jobs.taskValues.get(task_key="producer", key="region") == "eu"
-            )
+            assert dbutils.jobs.taskValues.get(task_key="producer", key="region") == "eu"
 
     def test_non_string_value_is_stringified(self):
         with dbutils.jobs.taskValues.current_task("producer"):
@@ -45,17 +38,13 @@ class TestTaskValuesSetGet:
     def test_default_used_when_key_missing_in_job(self):
         with dbutils.jobs.taskValues.current_task("producer"):
             assert (
-                dbutils.jobs.taskValues.get(
-                    taskKey="producer", key="missing", default="fallback"
-                )
+                dbutils.jobs.taskValues.get(taskKey="producer", key="missing", default="fallback")
                 == "fallback"
             )
 
     def test_debug_value_used_outside_job(self):
         assert (
-            dbutils.jobs.taskValues.get(
-                taskKey="producer", key="region", debugValue="local"
-            )
+            dbutils.jobs.taskValues.get(taskKey="producer", key="region", debugValue="local")
             == "local"
         )
 
@@ -97,8 +86,6 @@ class TestTaskValuesIsolation:
         )
         parent = tmp_path / "parent.py"
         store = dbutils.jobs.taskValues
-        with store.current_task("parent"), dbutils.executor.caller_context(
-            str(parent)
-        ):
+        with store.current_task("parent"), dbutils.executor.caller_context(str(parent)):
             dbutils.notebook.run("./child", 60)
             assert store.get(taskKey="parent", key="from_child") == "ok"

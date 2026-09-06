@@ -1,11 +1,8 @@
 import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 
-from testbricks.dbutils import DbutilsError, configure, dbutils
+from testbricks.dbutils import DbutilsError, dbutils
 
 
 @pytest.fixture(autouse=True)
